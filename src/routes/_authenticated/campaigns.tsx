@@ -2,6 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
+import { audiencePreviewFn } from "@/lib/inbox.functions";
 import { supabase } from "@/integrations/supabase/client";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
@@ -201,6 +202,13 @@ function CampaignWizard({ onDone }: { onDone: () => void }) {
       const { count } = await q;
       return count ?? 0;
     },
+    enabled: open && step >= 2,
+  });
+
+  const audiencePreview = useServerFn(audiencePreviewFn);
+  const { data: preview } = useQuery({
+    queryKey: ["audience-preview", selectedTags],
+    queryFn: () => audiencePreview({ data: { tags: selectedTags } }),
     enabled: open && step >= 2,
   });
 
