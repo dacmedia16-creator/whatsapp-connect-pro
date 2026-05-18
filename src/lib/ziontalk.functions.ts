@@ -521,6 +521,7 @@ export const enqueueCampaignFn = createServerFn({ method: "POST" })
     if (channelIds.length) channelsQ = channelsQ.in("id", channelIds);
     const { data: channels } = await channelsQ;
     if (!channels || !channels.length) throw new Error("Nenhum canal disponível");
+    const channelList = channels;
 
     // Insert campaign_recipients (skip duplicates via ON CONFLICT)
     const recipientRows = contacts.map((c) => ({
@@ -549,25 +550,25 @@ export const enqueueCampaignFn = createServerFn({ method: "POST" })
     const jitterMax = settings?.random_delay_max ?? 0;
     // contador local de uso por canal para least_used
     const localUsage = new Map<string, number>(
-      channels.map((c) => [c.id, c.sent_today_date === today ? (c.sent_today ?? 0) : 0]),
+      channelList.map((c) => [c.id, c.sent_today_date === today ? (c.sent_today ?? 0) : 0]),
     );
-    const orderedPriority = priority.filter((id) => channels.some((c) => c.id === id));
+    const orderedPriority = priority.filter((id) => channelList.some((c) => c.id === id));
 
     function pickInitialChannel(idx: number): { id: string } {
       if (rotationMode === "manual_priority" && orderedPriority.length) {
         return { id: orderedPriority[0] };
       }
       if (rotationMode === "least_used") {
-        let best = channels[0];
+        let best = channelList[0];
         let bestUsed = localUsage.get(best.id) ?? 0;
-        for (const c of channels) {
+        for (const c of channelList) {
           const u = localUsage.get(c.id) ?? 0;
           if (u < bestUsed) { best = c; bestUsed = u; }
         }
         localUsage.set(best.id, bestUsed + 1);
         return { id: best.id };
       }
-      return { id: channels[idx % channels.length].id };
+      return { id: channelList[idx % channelList.length].id };
     }
 
     const queueRows = (recs ?? []).map((r, idx) => {
