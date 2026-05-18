@@ -1,21 +1,27 @@
-## Gerar novo ZION_WEBHOOK_TOKEN
+## Testar webhook ZionTalk → Inbox
 
-Vou rotacionar o segredo `ZION_WEBHOOK_TOKEN` com um novo valor aleatório (32 caracteres, seguro) e te mostrar o valor aqui no chat para você copiar.
+Vou simular uma mensagem recebida chamando o endpoint do webhook diretamente (como o ZionTalk faria), usando um contato já cadastrado no banco, e depois confirmar que a mensagem apareceu no Inbox.
+
+### Contato que vou usar
+
+- **Denis** — `+5515981788214` (já existe, conversa ativa `5ef0fec0-...`, canal `Envio 1`).
 
 ### Passos
 
-1. Gerar um token aleatório seguro (ex.: `openssl rand -hex 24`).
-2. Atualizar o segredo `ZION_WEBHOOK_TOKEN` no backend (Lovable Cloud) com esse valor.
-3. Te mostrar o token completo + a URL pronta para colar no ZionTalk:
+1. Localizar a rota do webhook (`src/routes/api/public/webhooks/ziontalk.*`) e confirmar o formato de payload aceito (campos esperados: telefone, texto, channel/instance, etc.).
+2. Disparar um `POST` para:
    ```
-   https://enviomassapro.lovable.app/api/public/webhooks/ziontalk?token=NOVO_TOKEN
+   https://enviomassapro.lovable.app/api/public/webhooks/ziontalk?token=<ZION_WEBHOOK_TOKEN>
    ```
-4. Você cola essa URL no campo **"URL de destino"** do ZionTalk e envia uma mensagem de teste.
+   com payload simulando mensagem inbound do Denis (ex.: `"Olá, mensagem de teste"`).
+3. Verificar resposta HTTP (esperado 200). Se 401 → token errado. Se 4xx/5xx → checar logs do server function.
+4. Consultar o banco (`messages` da conversa do Denis) para confirmar que a nova mensagem inbound foi inserida.
+5. Conferir no preview `/inbox` que a mensagem aparece em tempo real.
 
 ### Observações
 
-- O token antigo deixa de funcionar imediatamente após a rotação.
-- Nenhum código será alterado — só o valor do segredo.
-- Depois do teste, confirmamos no Inbox que a mensagem chegou.
+- Nenhuma mudança de código. É só execução de teste.
+- Se o payload simulado não bater com o esperado pela rota, ajusto o JSON do teste (não o código) até refletir o que o ZionTalk envia.
+- Caso o webhook devolva erro, te mostro o log e proponho a correção em uma nova rodada.
 
-Aprove para eu gerar e aplicar.
+Aprovo para executar?
