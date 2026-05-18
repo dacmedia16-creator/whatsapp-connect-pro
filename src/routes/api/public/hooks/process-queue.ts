@@ -62,19 +62,14 @@ export const Route = createFileRoute("/api/public/hooks/process-queue")({
         const today = new Date().toISOString().slice(0, 10);
         const nowIso = new Date().toISOString();
 
-        // Concorrência: pegamos N itens, marcamos para 'processing' atomicamente via update returning
-        const { data: claimed, error: claimErr } = await supabaseAdmin.rpc("noop", {} as any).then(
-          async () => {
-            // Update direto com filtro de status='pending', retornando ids reservados
-            return await supabaseAdmin
-              .from("message_queue")
-              .update({ status: "processing", attempts: 1 })
-              .lte("scheduled_for", nowIso)
-              .eq("status", "pending")
-              .select("id")
-              .limit(25);
-          },
-        ).catch((e) => ({ data: null, error: e }));
+        // Concorrência: update atômico com filtro status='pending' reserva os ids para este worker
+        const { data: claimed, error: claimErr } = await supabaseAdmin
+          .from("message_queue")
+          .update({ status: "processing", attempts: 1 })
+          .lte("scheduled_for", nowIso)
+          .eq("status", "pending")
+          .select("id")
+          .limit(25);
 
         if (claimErr) return Response.json({ error: claimErr.message }, { status: 500 });
         const ids = (claimed ?? []).map((r: any) => r.id);
