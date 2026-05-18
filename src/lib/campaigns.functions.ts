@@ -131,7 +131,8 @@ function classifyExistingContacts(
 const createInput = z.object({
   name: z.string().trim().min(1).max(160),
   description: z.string().trim().max(500).optional().nullable(),
-  channelId: z.string().uuid(),
+  channelId: z.string().uuid().optional(),
+  channelIds: z.array(z.string().uuid()).min(1).max(50).optional(),
   scheduledAt: z.string().datetime().nullable(),
   message: z.string().trim().min(5).max(4096),
   ratePerMin: z.number().int().min(1).max(120),
@@ -150,6 +151,23 @@ const createInput = z.object({
     consent: z.boolean(),
   })).min(1).max(5000),
   initiate: z.boolean(),
+  sendSettings: z.object({
+    selected_channel_ids: z.array(z.string().uuid()).max(50),
+    rotation_mode: z.enum(["round_robin", "least_used", "manual_priority"]),
+    channel_priority: z.array(z.string().uuid()).max(50),
+    delay_seconds: z.number().int().min(0).max(3600),
+    random_delay_min: z.number().int().min(0).max(3600).nullable(),
+    random_delay_max: z.number().int().min(0).max(3600).nullable(),
+    max_per_minute: z.number().int().min(1).max(600),
+    max_per_hour: z.number().int().min(1).max(10000),
+    max_per_day_per_channel: z.number().int().min(1).max(100000),
+    allowed_start_time: z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/),
+    allowed_end_time: z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/),
+    allowed_weekdays: z.array(z.number().int().min(0).max(6)).min(1).max(7),
+    timezone: z.string().min(1).max(64),
+    auto_pause_outside_hours: z.boolean(),
+    auto_pause_on_all_channels_down: z.boolean(),
+  }).optional(),
 });
 
 const OPT_OUT_FOOTER = "\n\nResponda SAIR para não receber mais mensagens.";
@@ -160,13 +178,19 @@ export const createCampaignFn = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     await assertManager(context.userId);
 
-    const { data: channel, error: chErr } = await supabaseAdmin
+    const channelIds = data.channelIds && data.channelIds.length
+      ? data.channelIds
+      : (data.channelId ? [data.channelId] : []);
+    if (!channelIds.length) throw new Error("Selecione ao menos 1 canal");
+
+    const { data: chs, error: chErr } = await supabaseAdmin
       .from("channels")
       .select("id, status")
-      .eq("id", data.channelId)
-      .maybeSingle();
-    if (chErr || !channel) throw new Error("Canal não encontrado");
-    if (channel.status === "paused") throw new Error("Canal está pausado");
+      .in("id", channelIds);
+    if (chErr) throw new Error(chErr.message);
+    if (!chs || chs.length !== channelIds.length) throw new Error("Canal não encontrado");
+    if (chs.some((c) => c.status === "paused")) throw new Error("Há canais pausados na seleção");
+    const primaryChannelId = channelIds[0];
 
     if (data.scheduledAt) {
       const ts = new Date(data.scheduledAt).getTime();
@@ -230,7 +254,7 @@ export const createCampaignFn = createServerFn({ method: "POST" })
           ...(data.methodSummary ?? {}),
           autoPauseOnErrors: !!data.autoPauseOnErrors,
         },
-        channel_ids: [data.channelId],
+        channel_ids: channelIds,
         rate_per_min: data.ratePerMin,
         scheduled_at: data.scheduledAt,
         status,
@@ -244,11 +268,36 @@ export const createCampaignFn = createServerFn({ method: "POST" })
     const recipientRows = contactIds.map((cid) => ({
       campaign_id: campaign.id,
       contact_id: cid,
-      channel_id: data.channelId,
+      channel_id: primaryChannelId,
       status: "queued" as const,
     }));
     const { error: rErr } = await supabaseAdmin.from("campaign_recipients").insert(recipientRows);
     if (rErr) throw new Error(rErr.message);
+
+    // Persistir campaign_send_settings — usa defaults quando não fornecido.
+    const s = data.sendSettings;
+    const settingsRow = {
+      campaign_id: campaign.id,
+      selected_channel_ids: s?.selected_channel_ids?.length ? s.selected_channel_ids : channelIds,
+      rotation_mode: s?.rotation_mode ?? ("round_robin" as const),
+      channel_priority: s?.channel_priority?.length ? s.channel_priority : channelIds,
+      delay_seconds: s?.delay_seconds ?? 30,
+      random_delay_min: s?.random_delay_min ?? null,
+      random_delay_max: s?.random_delay_max ?? null,
+      max_per_minute: s?.max_per_minute ?? 20,
+      max_per_hour: s?.max_per_hour ?? 200,
+      max_per_day_per_channel: s?.max_per_day_per_channel ?? 500,
+      allowed_start_time: s?.allowed_start_time ?? "09:00",
+      allowed_end_time: s?.allowed_end_time ?? "18:00",
+      allowed_weekdays: s?.allowed_weekdays ?? [1, 2, 3, 4, 5],
+      timezone: s?.timezone ?? "America/Sao_Paulo",
+      auto_pause_outside_hours: s?.auto_pause_outside_hours ?? true,
+      auto_pause_on_all_channels_down: s?.auto_pause_on_all_channels_down ?? true,
+    };
+    const { error: sErr } = await supabaseAdmin
+      .from("campaign_send_settings")
+      .upsert(settingsRow, { onConflict: "campaign_id" });
+    if (sErr) throw new Error(sErr.message);
 
     return { id: campaign.id, status, eligible: contactIds.length };
   });

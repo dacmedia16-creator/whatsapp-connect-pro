@@ -1,94 +1,56 @@
+## Objetivo
 
-## Solidificar a lógica de envio (back-end), com módulos separados
+Trazer todas as configurações avançadas de envio (hoje em "Configurar envios" do painel/tela de settings da campanha) para dentro do wizard de criação de campanhas, de forma que o gestor já defina tudo no momento da criação — sem precisar abrir uma segunda tela depois.
 
-A UI, a tabela `campaign_send_settings`, o worker `process-queue.ts` e o cron job (1×/min) já existem. Mas a lógica está concentrada em um arquivo só e o `enqueueCampaignFn` ainda ignora `campaign_send_settings`. Vou separar a lógica em módulos servidor e fazer o enqueue respeitar as configurações.
+## O que muda na UI
 
-### Estado atual (já feito)
+O wizard atual tem 2 etapas:
+1. Dados + destinatários
+2. Mensagem + envio (apenas velocidade + auto-pausa)
 
-- `campaign_send_settings` (canais, rotação, delays, limites, janela, auto-pause).
-- Cron `zionflow-process-queue` chamando `/api/public/hooks/process-queue` a cada minuto.
-- `process-queue.ts` já implementa: consentimento, rotação por settings, limite diário por canal, janela de horário da campanha + business_hours do canal, limites por minuto/hora, auto-pause em "todos canais down", backoff exponencial, atualização de status, log via `send_logs`, criação de conversa/mensagem.
-- Trigger `fn_log_campaign_event` já popula `campaign_events` automaticamente em INSERT/UPDATE de `campaign_recipients`.
-- UIs: `sending-panel.tsx` (operação) e `campaigns.$campaignId.settings.tsx` (configuração).
+Passará a ter **3 etapas**:
 
-### O que falta
+1. **Dados e destinatários** (igual hoje)
+   - Mudança pequena: o seletor "Canal *" vira **multi-seleção de canais** (checkbox list) em vez de um único canal, já que rotação exige múltiplos. Permite 1 só (modo trivial).
 
-1. **Separar a lógica do worker em módulos.** Hoje tudo está em `process-queue.ts`.
-2. **`enqueueCampaignFn` não lê `campaign_send_settings`.** Usa `campaign.channel_ids` e `campaign.rate_per_min` — ignora canais, delay, random delay e janela configurados pelo gestor.
+2. **Mensagem** (extraída da etapa 2 atual)
+   - Textarea + variáveis + preview + warnings. Sem mudanças.
 
-### 1. Nova organização (server-only)
+3. **Configurações de envio** (nova, espelhando a tela `campaigns.$campaignId.settings.tsx`)
+   - **Rotação entre canais**: round_robin / least_used / manual_priority (com reordenação por setas quando manual).
+   - **Velocidade**: `delay_seconds` entre envios + jitter aleatório (`random_delay_min` / `random_delay_max`).
+   - **Limites**: `max_per_minute`, `max_per_hour`, `max_per_day_per_channel`.
+   - **Janela de envio**: `allowed_start_time`, `allowed_end_time`, dias da semana (chips Seg–Dom), `timezone`.
+   - **Segurança**: `auto_pause_outside_hours`, `auto_pause_on_all_channels_down`, "pausar em caso de muitos erros" (já existente).
+   - Botão "Restaurar padrões" no rodapé desta etapa.
 
-```text
-src/lib/send/
-├── channel-selector.server.ts   # pickChannel(settings, current, campaignId, ctx)
-├── rate-limit.server.ts         # recentSends + isWithinCampaignWindow + isWithinBusinessHours
-├── sender.server.ts             # processQueueItem(item, ctx) — orquestra 1 item
-└── audit.server.ts              # logQueueEvent(item, action, meta) — wrapper sobre send_logs
-```
+Etapa 4 (resumo) é absorvida no rodapé da etapa 3 — checkbox "Iniciar/agendar imediatamente" + bloco compacto de resumo permanecem.
 
-- `channel-selector.server.ts`:
-  `pickChannel({ settings, currentChannelId, campaignId, ctx })` recebe um `ctx` com caches (channelsCache, rrCursor, settingsCache) e `recentSends`. Implementa `round_robin`, `least_used`, `manual_priority` + filtros (status, daily limit, max_per_minute, max_per_hour). Retorna canal ou `null`.
+## O que muda no backend
 
-- `rate-limit.server.ts`:
-  - `recentSends(channelId, sinceMs)` — conta `send_logs` 2xx por janela.
-  - `isWithinBusinessHours(bh)` — para canal.
-  - `isWithinCampaignWindow(settings)` — para campanha (tz, start/end, weekdays).
-  - Helpers `nextValidWindow(...)`.
+`createCampaignFn` em `src/lib/campaigns.functions.ts` passa a aceitar (e persistir) o bloco `sendSettings` no mesmo POST:
 
-- `sender.server.ts`:
-  `processQueueItem(item, ctx)` aplica em ordem os 10 passos: consent → pickChannel → channel ativo + limite diário → janela campanha + business_hours → carregar API key → enviar → atualizar fila/canal/recipient → criar conversa/message → schedule next em retry/reagendamento → auto-pause se aplicável. Retorna `{ status: "sent" | "failed" | "rescheduled" | "skipped" }`.
+- Schema Zod ganha `channelIds: z.array(uuid).min(1)` (substitui `channelId` único; mantém compat aceitando ambos por uma transição curta) e um objeto opcional `sendSettings` com todos os campos da tabela `campaign_send_settings`.
+- Validações novas: `allowed_start_time < allowed_end_time`, `random_delay_min ≤ random_delay_max ≤ delay_seconds*3`, `selected_channel_ids ⊆ channelIds`, `channel_priority` é permutação de `selected_channel_ids` quando `rotation_mode = manual_priority`.
+- Após inserir a campanha e antes de chamar `enqueueCampaignFn`, faz um `upsert` em `campaign_send_settings` com os valores recebidos (ou aplica defaults se `sendSettings` veio vazio, mantendo comportamento atual).
+- `campaigns.channel_ids` passa a guardar todos os canais selecionados (já é `uuid[]`).
+- `enqueueCampaignFn` já lê `campaign_send_settings` no fluxo atual — então a distribuição inicial (delay, jitter, rotação, janela) passa a respeitar o que o usuário definiu no wizard sem mudanças adicionais.
 
-- `audit.server.ts`:
-  - `logSendAttempt({ channel_id, contact_id, campaign_id, http_status, response_text })` — wrapper sobre `send_logs` (mantém compat com `logSend` de `ziontalk.server.ts`).
-  - Trigger `fn_log_campaign_event` continua emitindo eventos em `campaign_events`.
+## Tela "Configurar envios" da campanha
 
-- **`process-queue.ts` vira o "runner"**: claim atômico de até 25 itens, loop chamando `processQueueItem`, retorno de contagens. ~30 linhas.
+Permanece existindo (`/_authenticated/campaigns/$campaignId/settings`) para edição posterior. O botão "Configurar envios" no header da campanha continua útil para ajustes finos após o lançamento. A lógica passa a ser a mesma — a única diferença é que agora os valores iniciais já vêm preenchidos pelo wizard em vez dos defaults.
 
-### 2. `enqueueCampaignFn` respeitando settings
+## Arquivos afetados
 
-Modificar `src/lib/ziontalk.functions.ts`:
-- Buscar `campaign_send_settings` para a campanha.
-- Determinar canais elegíveis: `settings.selected_channel_ids` se houver, senão `campaign.channel_ids`, senão todos não pausados.
-- Distribuição inicial por `settings.rotation_mode`:
-  - `round_robin`: alterna em ordem.
-  - `least_used`: ordena por `sent_today` ascendente a cada item.
-  - `manual_priority`: usa `channel_priority` (primeiro canal disponível).
-- `scheduled_for[i]`: `startAt + i * delay_seconds * 1000` (em ms). Se `random_delay_min/max` definidos, adiciona jitter uniforme entre eles.
-- Se `startAt` cair fora da janela permitida (`allowed_weekdays`/`allowed_start_time`/`allowed_end_time`/`timezone`), avançar para o próximo slot válido antes de distribuir.
-- Compatibilidade: se a campanha não tem `campaign_send_settings`, manter comportamento antigo (`rate_per_min` + round-robin simples).
+- `src/routes/_authenticated/campaigns.index.tsx` — wizard ganha etapa 3 com todos os campos; seletor de canal vira multi-select; estado e `submit` enviam `sendSettings`.
+- `src/lib/campaigns.functions.ts` — `createInput` aceita `channelIds[]` e `sendSettings`; handler faz upsert em `campaign_send_settings`.
+- (Opcional, pequeno) extrair um componente reutilizável `SendSettingsForm` em `src/components/campaign/send-settings-form.tsx` consumido tanto pelo wizard quanto pela tela `campaigns.$campaignId.settings.tsx`, evitando duplicação. Recomendado.
 
-### 3. Garantias dos 10 passos (mapa)
+## Pontos de atenção
 
-| # | Passo | Onde |
-|---|---|---|
-| 1 | Próxima mensagem pendente | `process-queue.ts` (claim atômico) |
-| 2 | Consent + opt-out | `sender.server.ts` |
-| 3 | Escolher canal por modo | `channel-selector.server.ts` |
-| 4 | Canal ativo + limite diário | `channel-selector.server.ts` + `sender.server.ts` |
-| 5 | Delay entre envios | `enqueueCampaignFn` (no `scheduled_for` inicial) + backoff em `sender.server.ts` |
-| 6 | Enviar | `ziontalk.server.ts` (`zionSendMessage`) chamado por `sender.server.ts` |
-| 7 | Atualizar status da fila | `sender.server.ts` |
-| 8 | Registrar log | `audit.server.ts` + trigger `fn_log_campaign_event` |
-| 9 | Agendar próximo envio | `enqueueCampaignFn` (inicial) + `sender.server.ts` (retry/reagendamento) |
-| 10 | Auto-pause se sem canais | `sender.server.ts` (já existe) |
+- **Compat com campanhas antigas**: handler aceita `channelId` (singular) como atalho que vira `[channelId]` para não quebrar testes/integrações eventuais.
+- **Validação cruzada no front**: desabilitar "Iniciar campanha" se janela estiver inválida ou `selected_channel_ids` vazio.
+- **UX**: etapa 3 fica longa — usar `Accordion` com seções (Canais & rotação / Velocidade & limites / Janela / Segurança) para reduzir scroll.
+- **Sem mudança de schema** no banco — `campaign_send_settings` já existe com todos os campos necessários.
 
-### 4. Separação final
-
-| Camada | Arquivos |
-|---|---|
-| Interface do painel | `sending-panel.tsx` |
-| Configurações da campanha | `campaigns.$campaignId.settings.tsx`, `send-panel.functions.ts` (get/upsert) |
-| Seleção de canal | `src/lib/send/channel-selector.server.ts` |
-| Rate limit / janela | `src/lib/send/rate-limit.server.ts` |
-| Envio | `src/lib/send/sender.server.ts` + `ziontalk.server.ts` |
-| Logs e auditoria | `src/lib/send/audit.server.ts`, tabela `send_logs`, tabela `campaign_events` |
-| Runner (cron) | `src/routes/api/public/hooks/process-queue.ts` |
-
-### 5. Sem mudanças de schema
-
-Nenhuma migration. Apenas refactor de TypeScript + atualização de `enqueueCampaignFn`.
-
-### Arquivos
-
-- **novos**: `src/lib/send/channel-selector.server.ts`, `src/lib/send/rate-limit.server.ts`, `src/lib/send/sender.server.ts`, `src/lib/send/audit.server.ts`
-- **editados**: `src/routes/api/public/hooks/process-queue.ts` (simplifica para runner), `src/lib/ziontalk.functions.ts` (enqueue lê `campaign_send_settings`)
+Posso prosseguir com a implementação?

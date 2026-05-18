@@ -12,7 +12,6 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { useAuth } from "@/hooks/use-auth";
@@ -37,6 +36,12 @@ import { ComplianceSummary } from "@/components/campaign/compliance-summary";
 import { listContactListsFn, previewRecipientsFn, createCampaignFn } from "@/lib/campaigns.functions";
 import { emptySummary, renderTemplate, type ResolvedContact, type ResolveSummary } from "@/lib/recipient-resolver";
 import { normalizePhoneE164 } from "@/lib/phone";
+import {
+  SendSettingsForm,
+  SEND_SETTINGS_DEFAULTS,
+  validateSendSettings,
+  type SendSettingsState,
+} from "@/components/campaign/send-settings-form";
 
 export const Route = createFileRoute("/_authenticated/campaigns/")({
   component: CampaignsPage,
@@ -202,12 +207,12 @@ type Method = "list" | "tags" | "groups" | "import" | "manual";
 
 function NewCampaignWizard({ onDone }: { onDone: () => void }) {
   const [open, setOpen] = useState(false);
-  const [step, setStep] = useState<1 | 2>(1);
+  const [step, setStep] = useState<1 | 2 | 3>(1);
 
   // step 1
   const [name, setName] = useState("");
   const [scheduledAt, setScheduledAt] = useState("");
-  const [channelId, setChannelId] = useState<string>("");
+  const [channelIds, setChannelIds] = useState<string[]>([]);
   const [method, setMethod] = useState<Method | null>(null);
 
   // method state
@@ -223,19 +228,21 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
 
   // step 2
   const [message, setMessage] = useState("Olá {{nome}}, ");
-  const [ratePerMin, setRatePerMin] = useState(20);
-  const [autoPause, setAutoPause] = useState(true);
   const [initiate, setInitiate] = useState(true);
+
+  // step 3 — configurações avançadas de envio
+  const [sendSettings, setSendSettings] = useState<SendSettingsState>(SEND_SETTINGS_DEFAULTS);
 
   const previewFn = useServerFn(previewRecipientsFn);
   const createFn = useServerFn(createCampaignFn);
 
   const reset = () => {
-    setStep(1); setName(""); setScheduledAt(""); setChannelId(""); setMethod(null);
+    setStep(1); setName(""); setScheduledAt(""); setChannelIds([]); setMethod(null);
     setListIds([]); setTagSelection([]); setTagMatch("any");
     setManualRows([]); setImportedRows([]);
     setResolved([]); setSummary(emptySummary());
-    setMessage("Olá {{nome}}, "); setRatePerMin(20); setAutoPause(true); setInitiate(true);
+    setMessage("Olá {{nome}}, "); setInitiate(true);
+    setSendSettings(SEND_SETTINGS_DEFAULTS);
   };
 
   const { data: channels = [] } = useQuery({
@@ -249,6 +256,21 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
     },
     enabled: open,
   });
+
+  // Sincroniza canais selecionados na etapa 1 com sendSettings na etapa 3
+  // (quando o usuário muda a seleção no topo, reflete imediatamente nas configs).
+  useMemo(() => {
+    setSendSettings((prev) => {
+      if (
+        prev.selected_channel_ids.length === channelIds.length &&
+        prev.selected_channel_ids.every((id) => channelIds.includes(id))
+      ) return prev;
+      const priority = prev.channel_priority.filter((id) => channelIds.includes(id));
+      const missing = channelIds.filter((id) => !priority.includes(id));
+      return { ...prev, selected_channel_ids: channelIds, channel_priority: [...priority, ...missing] };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [channelIds.join("|")]);
 
   const { data: lists = [] } = useQuery({
     queryKey: ["contact-lists"],
@@ -334,8 +356,10 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
 
   const eligibleCount = summary.eligible;
   const scheduledValid = !scheduledAt || new Date(scheduledAt).getTime() > Date.now() - 60_000;
-  const canAdvance = !!name.trim() && !!channelId && scheduledValid && eligibleCount >= 1;
-  const canSubmit = canAdvance && message.trim().length >= 5;
+  const canAdvance = !!name.trim() && channelIds.length > 0 && scheduledValid && eligibleCount >= 1;
+  const canAdvanceFromStep2 = canAdvance && message.trim().length >= 5;
+  const settingsError = useMemo(() => validateSendSettings(sendSettings), [sendSettings]);
+  const canSubmit = canAdvanceFromStep2 && !settingsError;
 
   const eligibleRecipients = useMemo(
     () => resolved.filter((r) => r.status === "eligible" && r.phone_e164),
@@ -368,15 +392,16 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
         data: {
           name: name.trim(),
           description: null,
-          channelId,
+          channelIds,
           scheduledAt: scheduledAt ? new Date(scheduledAt).toISOString() : null,
           message: message.trim(),
-          ratePerMin,
-          autoPauseOnErrors: autoPause,
+          ratePerMin: Math.max(1, Math.min(120, Math.round(60 / Math.max(1, sendSettings.delay_seconds)))),
+          autoPauseOnErrors: sendSettings.auto_pause_on_all_channels_down,
           method: method as Exclude<Method, "groups">,
           methodSummary,
           recipients,
           initiate,
+          sendSettings,
         },
       });
     },
@@ -420,17 +445,24 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
                 </div>
                 <div className="space-y-1.5">
                   <Label>Canal *</Label>
-                  <Select value={channelId} onValueChange={setChannelId}>
-                    <SelectTrigger><SelectValue placeholder="Selecione um canal" /></SelectTrigger>
-                    <SelectContent>
-                      {channels.length === 0 && <div className="px-3 py-2 text-sm text-muted-foreground">Nenhum canal ativo</div>}
-                      {channels.map((c: any) => (
-                        <SelectItem key={c.id} value={c.id}>
-                          {c.label} <span className="text-muted-foreground text-xs ml-1">· {c.status}</span>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <div className="max-h-32 overflow-y-auto border rounded-md divide-y">
+                    {channels.length === 0 && (
+                      <div className="px-3 py-2 text-sm text-muted-foreground">Nenhum canal ativo</div>
+                    )}
+                    {channels.map((c: any) => {
+                      const checked = channelIds.includes(c.id);
+                      return (
+                        <label key={c.id} className="flex items-center gap-2 px-3 py-1.5 cursor-pointer hover:bg-muted/40 text-sm">
+                          <Checkbox checked={checked} onCheckedChange={(v) =>
+                            setChannelIds((prev) => v ? Array.from(new Set([...prev, c.id])) : prev.filter((x) => x !== c.id))
+                          } />
+                          <span className="truncate">{c.label}</span>
+                          <span className="text-muted-foreground text-xs ml-auto">{c.status}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">{channelIds.length} canal(is) selecionado(s)</p>
                 </div>
               </div>
 
@@ -635,39 +667,40 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
               </Card>
 
               <Card>
-                <CardContent className="p-4 space-y-3">
-                  <h3 className="font-medium text-sm">Configurações de envio</h3>
-                  <div className="grid md:grid-cols-2 gap-3">
-                    <div className="space-y-1.5">
-                      <Label>Velocidade (msg/min/canal)</Label>
-                      <Input type="number" min={1} max={120} value={ratePerMin} onChange={(e) => setRatePerMin(parseInt(e.target.value || "1", 10))} />
-                      <p className="text-[11px] text-muted-foreground">Intervalo aprox.: {(60 / Math.max(ratePerMin, 1)).toFixed(1)}s entre mensagens</p>
-                    </div>
-                    <div className="space-y-2 pt-5">
-                      <label className="flex items-center gap-2 text-sm"><Checkbox checked disabled /> Respeitar horário comercial do canal</label>
-                      <label className="flex items-center gap-2 text-sm"><Checkbox checked={autoPause} onCheckedChange={(v) => setAutoPause(!!v)} /> Pausar automaticamente em caso de muitos erros</label>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
                 <CardContent className="p-4 space-y-2 text-sm">
                   <h3 className="font-medium">Resumo final</h3>
                   <div className="grid md:grid-cols-2 gap-y-1 gap-x-4">
                     <p><span className="text-muted-foreground">Nome:</span> {name}</p>
-                    <p><span className="text-muted-foreground">Canal:</span> {channels.find((c: any) => c.id === channelId)?.label ?? "—"}</p>
+                    <p><span className="text-muted-foreground">Canais:</span> {channels.filter((c: any) => channelIds.includes(c.id)).map((c: any) => c.label).join(", ") || "—"}</p>
                     <p><span className="text-muted-foreground">Agendamento:</span> {scheduledAt ? format(new Date(scheduledAt), "dd/MM/yyyy HH:mm", { locale: ptBR }) : "Imediato"}</p>
                     <p><span className="text-muted-foreground">Método:</span> {method}</p>
                     <p className="text-success"><span className="text-muted-foreground">Elegíveis:</span> {summary.eligible}</p>
                     <p className="text-warning"><span className="text-muted-foreground">Bloqueados:</span> {summary.blockedOptOut + summary.blockedNoConsent + summary.invalidPhone + summary.duplicates}</p>
                   </div>
-                  <div className="pt-2">
-                    <label className="flex items-center gap-2 text-sm">
-                      <Checkbox checked={initiate} onCheckedChange={(v) => setInitiate(!!v)} />
-                      Iniciar/agendar imediatamente após criar (desmarque para salvar como rascunho)
-                    </label>
-                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
+          {step === 3 && (
+            <div className="space-y-5">
+              <SendSettingsForm
+                form={sendSettings}
+                onChange={setSendSettings}
+                channels={channels.filter((c: any) => channelIds.includes(c.id))}
+                showChannelSelection={false}
+              />
+              {settingsError && (
+                <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-xs text-destructive">
+                  ⚠ {settingsError}
+                </div>
+              )}
+              <Card>
+                <CardContent className="p-4 text-sm">
+                  <label className="flex items-center gap-2">
+                    <Checkbox checked={initiate} onCheckedChange={(v) => setInitiate(!!v)} />
+                    Iniciar/agendar imediatamente após criar (desmarque para salvar como rascunho)
+                  </label>
                 </CardContent>
               </Card>
             </div>
@@ -675,17 +708,21 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
         </div>
 
         <footer className="px-6 py-4 border-t flex items-center justify-between gap-3 bg-muted/10">
-          <span className="text-xs text-muted-foreground">Etapa {step} de 2</span>
+          <span className="text-xs text-muted-foreground">Etapa {step} de 3</span>
           <div className="flex gap-2">
             <Button variant="ghost" onClick={() => { setOpen(false); reset(); }}>Cancelar</Button>
-            {step === 2 && (
-              <Button variant="outline" onClick={() => setStep(1)}>
+            {step > 1 && (
+              <Button variant="outline" onClick={() => setStep((s) => (s === 3 ? 2 : 1))}>
                 <ArrowLeft className="h-4 w-4 mr-1" /> Voltar
               </Button>
             )}
-            {step === 1 ? (
+            {step === 1 && (
               <Button disabled={!canAdvance} onClick={() => setStep(2)}>Próxima</Button>
-            ) : (
+            )}
+            {step === 2 && (
+              <Button disabled={!canAdvanceFromStep2} onClick={() => setStep(3)}>Próxima</Button>
+            )}
+            {step === 3 && (
               <Button disabled={!canSubmit || submit.isPending} onClick={() => submit.mutate()}>
                 {!initiate ? "Salvar rascunho" : scheduledAt ? "Agendar campanha" : "Iniciar campanha"}
               </Button>
