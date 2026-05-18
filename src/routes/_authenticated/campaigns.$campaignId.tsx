@@ -212,6 +212,11 @@ function CampaignDetail() {
                   <Radio className={`h-3 w-3 ${live ? "animate-pulse" : ""}`} />
                   {live ? "Ao vivo" : "Offline"}
                 </Badge>
+                <Button asChild variant="outline">
+                  <Link to="/campaigns/$campaignId/settings" params={{ campaignId: campaign.id }}>
+                    <Settings className="h-4 w-4 mr-1" /> Configurar envios
+                  </Link>
+                </Button>
                 {(campaign.status === "draft" || campaign.status === "scheduled") && (
                   <AlertDialog>
                     <AlertDialogTrigger asChild>
