@@ -37,6 +37,12 @@ import { ComplianceSummary } from "@/components/campaign/compliance-summary";
 import { listContactListsFn, previewRecipientsFn, createCampaignFn } from "@/lib/campaigns.functions";
 import { emptySummary, renderTemplate, type ResolvedContact, type ResolveSummary } from "@/lib/recipient-resolver";
 import { normalizePhoneE164 } from "@/lib/phone";
+import {
+  SendSettingsForm,
+  SEND_SETTINGS_DEFAULTS,
+  validateSendSettings,
+  type SendSettingsState,
+} from "@/components/campaign/send-settings-form";
 
 export const Route = createFileRoute("/_authenticated/campaigns/")({
   component: CampaignsPage,
@@ -202,12 +208,12 @@ type Method = "list" | "tags" | "groups" | "import" | "manual";
 
 function NewCampaignWizard({ onDone }: { onDone: () => void }) {
   const [open, setOpen] = useState(false);
-  const [step, setStep] = useState<1 | 2>(1);
+  const [step, setStep] = useState<1 | 2 | 3>(1);
 
   // step 1
   const [name, setName] = useState("");
   const [scheduledAt, setScheduledAt] = useState("");
-  const [channelId, setChannelId] = useState<string>("");
+  const [channelIds, setChannelIds] = useState<string[]>([]);
   const [method, setMethod] = useState<Method | null>(null);
 
   // method state
@@ -223,19 +229,21 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
 
   // step 2
   const [message, setMessage] = useState("Olá {{nome}}, ");
-  const [ratePerMin, setRatePerMin] = useState(20);
-  const [autoPause, setAutoPause] = useState(true);
   const [initiate, setInitiate] = useState(true);
+
+  // step 3 — configurações avançadas de envio
+  const [sendSettings, setSendSettings] = useState<SendSettingsState>(SEND_SETTINGS_DEFAULTS);
 
   const previewFn = useServerFn(previewRecipientsFn);
   const createFn = useServerFn(createCampaignFn);
 
   const reset = () => {
-    setStep(1); setName(""); setScheduledAt(""); setChannelId(""); setMethod(null);
+    setStep(1); setName(""); setScheduledAt(""); setChannelIds([]); setMethod(null);
     setListIds([]); setTagSelection([]); setTagMatch("any");
     setManualRows([]); setImportedRows([]);
     setResolved([]); setSummary(emptySummary());
-    setMessage("Olá {{nome}}, "); setRatePerMin(20); setAutoPause(true); setInitiate(true);
+    setMessage("Olá {{nome}}, "); setInitiate(true);
+    setSendSettings(SEND_SETTINGS_DEFAULTS);
   };
 
   const { data: channels = [] } = useQuery({
@@ -249,6 +257,21 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
     },
     enabled: open,
   });
+
+  // Sincroniza canais selecionados na etapa 1 com sendSettings na etapa 3
+  // (quando o usuário muda a seleção no topo, reflete imediatamente nas configs).
+  useMemo(() => {
+    setSendSettings((prev) => {
+      if (
+        prev.selected_channel_ids.length === channelIds.length &&
+        prev.selected_channel_ids.every((id) => channelIds.includes(id))
+      ) return prev;
+      const priority = prev.channel_priority.filter((id) => channelIds.includes(id));
+      const missing = channelIds.filter((id) => !priority.includes(id));
+      return { ...prev, selected_channel_ids: channelIds, channel_priority: [...priority, ...missing] };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [channelIds.join("|")]);
 
   const { data: lists = [] } = useQuery({
     queryKey: ["contact-lists"],
@@ -334,8 +357,10 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
 
   const eligibleCount = summary.eligible;
   const scheduledValid = !scheduledAt || new Date(scheduledAt).getTime() > Date.now() - 60_000;
-  const canAdvance = !!name.trim() && !!channelId && scheduledValid && eligibleCount >= 1;
-  const canSubmit = canAdvance && message.trim().length >= 5;
+  const canAdvance = !!name.trim() && channelIds.length > 0 && scheduledValid && eligibleCount >= 1;
+  const canAdvanceFromStep2 = canAdvance && message.trim().length >= 5;
+  const settingsError = useMemo(() => validateSendSettings(sendSettings), [sendSettings]);
+  const canSubmit = canAdvanceFromStep2 && !settingsError;
 
   const eligibleRecipients = useMemo(
     () => resolved.filter((r) => r.status === "eligible" && r.phone_e164),
@@ -368,15 +393,16 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
         data: {
           name: name.trim(),
           description: null,
-          channelId,
+          channelIds,
           scheduledAt: scheduledAt ? new Date(scheduledAt).toISOString() : null,
           message: message.trim(),
-          ratePerMin,
-          autoPauseOnErrors: autoPause,
+          ratePerMin: Math.max(1, Math.min(120, Math.round(60 / Math.max(1, sendSettings.delay_seconds)))),
+          autoPauseOnErrors: sendSettings.auto_pause_on_all_channels_down,
           method: method as Exclude<Method, "groups">,
           methodSummary,
           recipients,
           initiate,
+          sendSettings,
         },
       });
     },
