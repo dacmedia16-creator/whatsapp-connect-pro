@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { zionSendMessage, logSend } from "./ziontalk.server";
 
 async function getChannelApiKey(channelId: string): Promise<string> {
   const secret = process.env.CHANNEL_KEY_SECRET;
@@ -14,7 +15,6 @@ async function getChannelApiKey(channelId: string): Promise<string> {
   if (!data) throw new Error("Chave de API do canal indisponível");
   return data as string;
 }
-import { zionSendMessage, logSend } from "./ziontalk.server";
 
 function nextDateInTz(base: Date, addDays: number, hour: number, minute: number): Date {
   const d = new Date(base);
