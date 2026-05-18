@@ -161,6 +161,8 @@ function CampaignDetail() {
         toast.info(r.nextScheduledFor
           ? `${r.message}. Próximo envio: ${format(new Date(r.nextScheduledFor), "HH:mm", { locale: ptBR })}`
           : r.message);
+      } else if (r.sent === 0 && r.failed === 0 && r.rescheduled > 0) {
+        toast.info(`Envio adiado por horário comercial. ${r.rescheduled} mensagem(ns) reagendada(s).`);
       } else {
         toast.success(`Lote processado: ${r.sent} enviadas, ${r.failed} falharam, ${r.rescheduled} adiadas`);
       }
