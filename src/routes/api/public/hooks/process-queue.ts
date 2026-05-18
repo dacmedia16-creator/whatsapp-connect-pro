@@ -62,10 +62,11 @@ export const Route = createFileRoute("/api/public/hooks/process-queue")({
         const today = new Date().toISOString().slice(0, 10);
         const nowIso = new Date().toISOString();
 
-        // Concorrência: update atômico com filtro status='pending' reserva os ids para este worker
+        // Concorrência: update atômico com filtro status='pending' reserva os ids para este worker.
+        // attempts é incrementado depois (após carregar o valor atual).
         const { data: claimed, error: claimErr } = await supabaseAdmin
           .from("message_queue")
-          .update({ status: "processing", attempts: 1 })
+          .update({ status: "processing" })
           .lte("scheduled_for", nowIso)
           .eq("status", "pending")
           .select("id")
@@ -155,11 +156,14 @@ export const Route = createFileRoute("/api/public/hooks/process-queue")({
             });
           } else {
             failed++;
-            const tooMany = (item.attempts ?? 1) >= 3;
+            const attempts = (item.attempts ?? 0) + 1;
+            const tooMany = attempts >= 3;
+            const backoffMs = Math.min(60_000 * Math.pow(2, attempts), 60 * 60_000);
             await supabaseAdmin.from("message_queue").update({
               status: tooMany ? "failed" : "pending",
+              attempts,
               last_error: result.body.slice(0, 500),
-              scheduled_for: new Date(Date.now() + 60_000 * (item.attempts ?? 1)).toISOString(),
+              scheduled_for: new Date(Date.now() + backoffMs).toISOString(),
             }).eq("id", item.id);
             if (tooMany && item.campaign_recipient_id) {
               await supabaseAdmin.from("campaign_recipients").update({
