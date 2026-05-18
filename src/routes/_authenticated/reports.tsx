@@ -6,6 +6,22 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useState, createContext, useContext } from "react";
+import {
+  ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid,
+  BarChart, Bar, Legend,
+} from "recharts";
+
+const PeriodContext = createContext<number>(30);
+const usePeriodDays = () => useContext(PeriodContext);
+
+function periodStart(days: number) {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - days + 1);
+  return d;
+}
 
 export const Route = createFileRoute("/_authenticated/reports")({
   component: ReportsPage,
@@ -13,20 +29,87 @@ export const Route = createFileRoute("/_authenticated/reports")({
 });
 
 function ReportsPage() {
+  const [days, setDays] = useState(30);
   return (
     <div className="p-6 max-w-7xl mx-auto">
-      <PageHeader title="Relatórios" description="Métricas por campanha, canal e atendente." />
+      <PageHeader
+        title="Relatórios"
+        description="Métricas por campanha, canal e atendente."
+        actions={
+          <Select value={String(days)} onValueChange={(v) => setDays(parseInt(v, 10))}>
+            <SelectTrigger className="w-[160px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="7">Últimos 7 dias</SelectItem>
+              <SelectItem value="30">Últimos 30 dias</SelectItem>
+              <SelectItem value="90">Últimos 90 dias</SelectItem>
+            </SelectContent>
+          </Select>
+        }
+      />
+      <PeriodContext.Provider value={days}>
       <Tabs defaultValue="campaigns" className="space-y-4">
         <TabsList>
+          <TabsTrigger value="overview">Visão geral</TabsTrigger>
           <TabsTrigger value="campaigns">Campanhas</TabsTrigger>
           <TabsTrigger value="channels">Canais</TabsTrigger>
           <TabsTrigger value="agents">Atendentes</TabsTrigger>
         </TabsList>
+        <TabsContent value="overview"><OverviewReport /></TabsContent>
         <TabsContent value="campaigns"><CampaignsReport /></TabsContent>
         <TabsContent value="channels"><ChannelsReport /></TabsContent>
         <TabsContent value="agents"><AgentsReport /></TabsContent>
       </Tabs>
+      </PeriodContext.Provider>
     </div>
+  );
+}
+
+function OverviewReport() {
+  const days = usePeriodDays();
+  const { data, isLoading } = useQuery({
+    queryKey: ["report-overview", days],
+    queryFn: async () => {
+      const since = periodStart(days).toISOString();
+      const { data: logs } = await supabase
+        .from("send_logs")
+        .select("created_at, http_status")
+        .gte("created_at", since)
+        .limit(10000);
+      const buckets: Record<string, { day: string; sent: number; failed: number }> = {};
+      for (let i = days - 1; i >= 0; i--) {
+        const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - i);
+        const key = d.toISOString().slice(0, 10);
+        buckets[key] = { day: key.slice(5), sent: 0, failed: 0 };
+      }
+      (logs ?? []).forEach((l: any) => {
+        const key = l.created_at.slice(0, 10);
+        const b = buckets[key]; if (!b) return;
+        if (l.http_status < 300) b.sent++; else b.failed++;
+      });
+      return Object.values(buckets);
+    },
+  });
+  return (
+    <Card><CardContent className="p-4">
+      <p className="text-sm font-medium mb-2">Envios por dia</p>
+      {isLoading ? (
+        <p className="text-sm text-muted-foreground py-12 text-center">Carregando…</p>
+      ) : (
+        <div className="h-72">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={data ?? []}>
+              <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+              <XAxis dataKey="day" className="text-xs" />
+              <YAxis className="text-xs" allowDecimals={false} />
+              <Tooltip />
+              <Legend />
+              <Line type="monotone" dataKey="sent" stroke="hsl(var(--success, 142 70% 45%))" strokeWidth={2} name="Enviadas" />
+              <Line type="monotone" dataKey="failed" stroke="hsl(var(--destructive))" strokeWidth={2} name="Falhas" />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+    </CardContent></Card>
   );
 }
 
