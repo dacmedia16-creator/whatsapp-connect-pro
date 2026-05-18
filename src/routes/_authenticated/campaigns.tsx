@@ -1,8 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { audiencePreviewFn } from "@/lib/inbox.functions";
 import { supabase } from "@/integrations/supabase/client";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
@@ -12,17 +11,21 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
-} from "@/components/ui/table";
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription,
-} from "@/components/ui/dialog";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { useAuth } from "@/hooks/use-auth";
-import { Plus, Megaphone, ArrowRight, ArrowLeft } from "lucide-react";
+import { Plus, Megaphone, List, Tag, Users, FileSpreadsheet, UserPlus, X, ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
+import { MethodCard } from "@/components/campaign/method-card";
+import { RecipientTable } from "@/components/campaign/recipient-table";
+import { ComplianceSummary } from "@/components/campaign/compliance-summary";
+import { listContactListsFn, previewRecipientsFn, createCampaignFn } from "@/lib/campaigns.functions";
+import { emptySummary, renderTemplate, type ResolvedContact, type ResolveSummary } from "@/lib/recipient-resolver";
+import { normalizePhoneE164 } from "@/lib/phone";
 
 export const Route = createFileRoute("/_authenticated/campaigns")({
   component: CampaignsPage,
@@ -35,7 +38,7 @@ type Campaign = {
   description: string | null;
   status: "draft" | "scheduled" | "running" | "paused" | "done";
   message_template: string;
-  audience_filter: { tags?: string[] };
+  audience_filter: any;
   channel_ids: string[];
   rate_per_min: number;
   scheduled_at: string | null;
@@ -73,7 +76,7 @@ function CampaignsPage() {
       <PageHeader
         title="Campanhas"
         description="Crie envios em massa com agendamento, throttling e distribuição por canais."
-        actions={canManage && <CampaignWizard onDone={() => qc.invalidateQueries({ queryKey: ["campaigns"] })} />}
+        actions={canManage && <NewCampaignWizard onDone={() => qc.invalidateQueries({ queryKey: ["campaigns"] })} />}
       />
 
       <Card>
@@ -104,16 +107,10 @@ function CampaignsPage() {
               {campaigns.map((c) => (
                 <TableRow key={c.id}>
                   <TableCell>
-                    <Link
-                      to="/campaigns/$campaignId"
-                      params={{ campaignId: c.id }}
-                      className="font-medium hover:underline"
-                    >
+                    <Link to="/campaigns/$campaignId" params={{ campaignId: c.id }} className="font-medium hover:underline">
                       {c.name}
                     </Link>
-                    {c.description && (
-                      <p className="text-xs text-muted-foreground line-clamp-1">{c.description}</p>
-                    )}
+                    {c.description && <p className="text-xs text-muted-foreground line-clamp-1">{c.description}</p>}
                   </TableCell>
                   <TableCell>
                     <Badge variant="outline" className={STATUS_LABELS[c.status]?.cls}>
@@ -122,19 +119,13 @@ function CampaignsPage() {
                   </TableCell>
                   <TableCell>{c.total_recipients}</TableCell>
                   <TableCell className="text-sm text-muted-foreground">
-                    {c.scheduled_at
-                      ? format(new Date(c.scheduled_at), "dd/MM/yyyy HH:mm", { locale: ptBR })
-                      : "Imediato"}
+                    {c.scheduled_at ? format(new Date(c.scheduled_at), "dd/MM/yyyy HH:mm", { locale: ptBR }) : "Imediato"}
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
                     {format(new Date(c.created_at), "dd/MM/yyyy", { locale: ptBR })}
                   </TableCell>
                   <TableCell className="text-right">
-                    <Link
-                      to="/campaigns/$campaignId"
-                      params={{ campaignId: c.id }}
-                      className="text-sm text-primary hover:underline"
-                    >
+                    <Link to="/campaigns/$campaignId" params={{ campaignId: c.id }} className="text-sm text-primary hover:underline">
                       Abrir
                     </Link>
                   </TableCell>
@@ -148,35 +139,47 @@ function CampaignsPage() {
   );
 }
 
-function CampaignWizard({ onDone }: { onDone: () => void }) {
+// ============================ Wizard ============================
+
+type Method = "list" | "tags" | "groups" | "import" | "manual";
+
+function NewCampaignWizard({ onDone }: { onDone: () => void }) {
   const [open, setOpen] = useState(false);
-  const [step, setStep] = useState(1);
+  const [step, setStep] = useState<1 | 2>(1);
+
+  // step 1
   const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const OPT_OUT_FOOTER = "\n\nResponda SAIR para não receber mais mensagens.";
-  const [template, setTemplate] = useState("Olá {{nome}}, " + OPT_OUT_FOOTER);
-  const [selectedTags, setSelectedTags] = useState<string[]>([]);
-  const [selectedChannels, setSelectedChannels] = useState<string[]>([]);
+  const [scheduledAt, setScheduledAt] = useState("");
+  const [channelId, setChannelId] = useState<string>("");
+  const [method, setMethod] = useState<Method | null>(null);
+
+  // method state
+  const [listId, setListId] = useState<string>("");
+  const [tagSelection, setTagSelection] = useState<string[]>([]);
+  const [tagMatch, setTagMatch] = useState<"any" | "all">("any");
+  const [manualRows, setManualRows] = useState<Array<{ name: string; phone: string; consent: boolean; tags: string[] }>>([]);
+  const [importedRows, setImportedRows] = useState<Array<{ name: string; phone: string; consent: boolean; tags: string[] }>>([]);
+
+  // results
+  const [resolved, setResolved] = useState<ResolvedContact[]>([]);
+  const [summary, setSummary] = useState<ResolveSummary>(emptySummary());
+
+  // step 2
+  const [message, setMessage] = useState("Olá {{nome}}, ");
   const [ratePerMin, setRatePerMin] = useState(20);
-  const [scheduleNow, setScheduleNow] = useState(true);
-  const [scheduledAt, setScheduledAt] = useState<string>("");
+  const [autoPause, setAutoPause] = useState(true);
+  const [initiate, setInitiate] = useState(true);
+
+  const previewFn = useServerFn(previewRecipientsFn);
+  const createFn = useServerFn(createCampaignFn);
 
   const reset = () => {
-    setStep(1); setName(""); setDescription(""); setTemplate("Olá {{nome}}, " + OPT_OUT_FOOTER);
-    setSelectedTags([]); setSelectedChannels([]); setRatePerMin(20);
-    setScheduleNow(true); setScheduledAt("");
+    setStep(1); setName(""); setScheduledAt(""); setChannelId(""); setMethod(null);
+    setListId(""); setTagSelection([]); setTagMatch("any");
+    setManualRows([]); setImportedRows([]);
+    setResolved([]); setSummary(emptySummary());
+    setMessage("Olá {{nome}}, "); setRatePerMin(20); setAutoPause(true); setInitiate(true);
   };
-
-  const { data: tagOptions = [] } = useQuery({
-    queryKey: ["all-tags"],
-    queryFn: async () => {
-      const { data } = await supabase.from("contacts").select("tags").limit(2000);
-      const s = new Set<string>();
-      (data ?? []).forEach((c) => (c.tags ?? []).forEach((t: string) => s.add(t)));
-      return Array.from(s).sort();
-    },
-    enabled: open,
-  });
 
   const { data: channels = [] } = useQuery({
     queryKey: ["channels-active"],
@@ -190,52 +193,138 @@ function CampaignWizard({ onDone }: { onDone: () => void }) {
     enabled: open,
   });
 
-  const { data: audienceCount } = useQuery({
-    queryKey: ["audience-count", selectedTags],
+  const { data: lists = [] } = useQuery({
+    queryKey: ["contact-lists"],
+    queryFn: () => listContactListsFn(),
+    enabled: open && method === "list",
+  });
+
+  const { data: tagOptions = [] } = useQuery({
+    queryKey: ["all-tags"],
     queryFn: async () => {
-      let q = supabase
-        .from("contacts")
-        .select("id", { count: "exact", head: true })
-        .eq("consent", true)
-        .is("opt_out_at", null);
-      if (selectedTags.length) q = q.contains("tags", selectedTags);
-      const { count } = await q;
-      return count ?? 0;
+      const { data } = await supabase.from("contacts").select("tags").limit(2000);
+      const s = new Set<string>();
+      (data ?? []).forEach((c) => (c.tags ?? []).forEach((t: string) => s.add(t)));
+      return Array.from(s).sort();
     },
-    enabled: open && step >= 2,
+    enabled: open && method === "tags",
   });
 
-  const audiencePreview = useServerFn(audiencePreviewFn);
-  const { data: preview } = useQuery({
-    queryKey: ["audience-preview", selectedTags],
-    queryFn: () => audiencePreview({ data: { tags: selectedTags } }),
-    enabled: open && step >= 2,
-  });
+  async function runPreview() {
+    try {
+      let res: { contacts: ResolvedContact[]; summary: ResolveSummary } | null = null;
+      if (method === "list" && listId) {
+        res = await previewFn({ data: { method: "list", listId } });
+      } else if (method === "tags" && tagSelection.length) {
+        res = await previewFn({ data: { method: "tags", tags: tagSelection, match: tagMatch } });
+      } else if (method === "manual" && manualRows.length) {
+        res = await previewFn({ data: { method: "manual", rows: manualRows } });
+      } else if (method === "import" && importedRows.length) {
+        res = await previewFn({ data: { method: "import", rows: importedRows } });
+      }
+      if (res) {
+        setResolved(res.contacts);
+        setSummary(res.summary);
+      } else {
+        setResolved([]);
+        setSummary(emptySummary());
+      }
+    } catch (e: any) {
+      toast.error(e.message ?? "Falha ao calcular destinatários");
+    }
+  }
 
-  const save = useMutation({
+  // Manual form
+  const [mName, setMName] = useState("");
+  const [mPhone, setMPhone] = useState("");
+  const [mConsent, setMConsent] = useState(true);
+
+  function addManual() {
+    if (!mName.trim() || !mPhone.trim()) return toast.error("Nome e telefone obrigatórios");
+    const norm = normalizePhoneE164(mPhone);
+    if (!norm) return toast.error("Telefone inválido");
+    setManualRows((rows) => [...rows, { name: mName.trim(), phone: norm, consent: mConsent, tags: [] }]);
+    setMName(""); setMPhone(""); setMConsent(true);
+  }
+
+  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const XLSX = await import("xlsx");
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array" });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows: any[] = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+      const parsed = rows.map((r) => {
+        const name = String(r.nome ?? r.name ?? r.Nome ?? "").trim();
+        const phone = String(r.telefone ?? r.phone ?? r.Telefone ?? r.celular ?? "").trim();
+        const tagsRaw = String(r.etiquetas ?? r.tags ?? r.Etiquetas ?? "").trim();
+        const tags = tagsRaw ? tagsRaw.split(/[,;|]/).map((t) => t.trim()).filter(Boolean) : [];
+        const consentRaw = String(r.consentimento ?? r.consent ?? "true").toLowerCase();
+        const consent = !["false", "0", "nao", "não", "n"].includes(consentRaw);
+        return { name: name || phone, phone, consent, tags };
+      }).filter((r) => r.phone);
+      if (!parsed.length) return toast.error("Nenhuma linha válida encontrada");
+      setImportedRows(parsed);
+      toast.success(`${parsed.length} linhas lidas da planilha`);
+    } catch (err: any) {
+      toast.error("Falha ao ler planilha: " + (err.message ?? "erro"));
+    } finally {
+      e.target.value = "";
+    }
+  }
+
+  const eligibleCount = summary.eligible;
+  const scheduledValid = !scheduledAt || new Date(scheduledAt).getTime() > Date.now() - 60_000;
+  const canAdvance = !!name.trim() && !!channelId && scheduledValid && eligibleCount >= 1;
+  const canSubmit = canAdvance && message.trim().length >= 5;
+
+  const eligibleRecipients = useMemo(
+    () => resolved.filter((r) => r.status === "eligible" && r.phone_e164),
+    [resolved],
+  );
+
+  const previewMsg = useMemo(() => {
+    const first = eligibleRecipients[0];
+    if (!first) return message;
+    return renderTemplate(message, { name: first.name, phone: first.phone_e164!, empresa: "" });
+  }, [message, eligibleRecipients]);
+
+  const warnings: string[] = [];
+  if (message.trim().length > 0 && message.trim().length < 20) warnings.push("Mensagem muito curta.");
+  if (!/\{\{\s*nome\s*\}\}/i.test(message)) warnings.push("Personalize com {{nome}} para melhor engajamento.");
+
+  const submit = useMutation({
     mutationFn: async () => {
-      if (!name.trim()) throw new Error("Nome obrigatório");
-      if (template.trim().length < 5) throw new Error("Mensagem muito curta");
-      if (!selectedChannels.length) throw new Error("Selecione ao menos um canal");
-      if (!scheduleNow && !scheduledAt) throw new Error("Defina a data de agendamento");
-      const finalTemplate = /sair|descadastr|parar|remover/i.test(template)
-        ? template
-        : template.trimEnd() + OPT_OUT_FOOTER;
-      const payload = {
-        name: name.trim(),
-        description: description.trim() || null,
-        message_template: finalTemplate,
-        audience_filter: { tags: selectedTags },
-        channel_ids: selectedChannels,
-        rate_per_min: ratePerMin,
-        scheduled_at: scheduleNow ? null : new Date(scheduledAt).toISOString(),
-        status: "draft" as const,
-      };
-      const { error } = await supabase.from("campaigns").insert(payload);
-      if (error) throw error;
+      const recipients = eligibleRecipients.map((r) => ({
+        id: r.id,
+        name: r.name,
+        phone_e164: r.phone_e164!,
+        tags: r.tags,
+        consent: true,
+      }));
+      const methodSummary: any = {};
+      if (method === "list") methodSummary.listId = listId;
+      if (method === "tags") { methodSummary.tags = tagSelection; methodSummary.match = tagMatch; }
+      return createFn({
+        data: {
+          name: name.trim(),
+          description: null,
+          channelId,
+          scheduledAt: scheduledAt ? new Date(scheduledAt).toISOString() : null,
+          message: message.trim(),
+          ratePerMin,
+          autoPauseOnErrors: autoPause,
+          method: method as Exclude<Method, "groups">,
+          methodSummary,
+          recipients,
+          initiate,
+        },
+      });
     },
-    onSuccess: () => {
-      toast.success("Campanha criada como rascunho");
+    onSuccess: (r) => {
+      toast.success(`Campanha ${r.status === "running" ? "iniciada" : r.status === "scheduled" ? "agendada" : "salva"} com ${r.eligible} destinatário(s)`);
       onDone();
       setOpen(false);
       reset();
@@ -248,182 +337,255 @@ function CampaignWizard({ onDone }: { onDone: () => void }) {
       <DialogTrigger asChild>
         <Button><Plus className="h-4 w-4 mr-1" /> Nova campanha</Button>
       </DialogTrigger>
-      <DialogContent className="max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>Nova campanha — Etapa {step} de 4</DialogTitle>
-          <DialogDescription>
-            {step === 1 && "Defina nome, descrição e mensagem (use {{nome}} e variáveis dos campos custom)."}
-            {step === 2 && "Selecione o público pelas tags. Apenas contatos com consentimento são incluídos."}
-            {step === 3 && "Distribua os envios em um ou mais canais com throttle por minuto."}
-            {step === 4 && "Envie agora ou agende para uma data futura."}
-          </DialogDescription>
-        </DialogHeader>
+      <DialogContent className="max-w-4xl max-h-[92vh] flex flex-col p-0 gap-0">
+        <header className="px-6 pt-6 pb-4 border-b">
+          <h2 className="text-xl font-semibold">Nova Campanha</h2>
+          <p className="text-sm text-muted-foreground">Configure sua campanha, escolha os destinatários e revise antes de enviar.</p>
+        </header>
 
-        <div className="min-h-[260px]">
+        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
           {step === 1 && (
-            <div className="space-y-3">
-              <div className="space-y-1">
-                <Label>Nome</Label>
-                <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={120} />
-              </div>
-              <div className="space-y-1">
-                <Label>Descrição (opcional)</Label>
-                <Input value={description} onChange={(e) => setDescription(e.target.value)} maxLength={240} />
-              </div>
-              <div className="space-y-1">
-                <Label>Mensagem</Label>
-                <Textarea
-                  value={template}
-                  onChange={(e) => setTemplate(e.target.value)}
-                  rows={6}
-                  maxLength={1024}
-                  placeholder="Ex: Olá {{nome}}, temos uma novidade para você!"
-                />
-                <p className="text-xs text-muted-foreground">
-                  Variáveis: <code>{`{{nome}}`}</code> e quaisquer chaves de <em>custom_fields</em>.
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  Um rodapé de descadastro (<em>“Responda SAIR…”</em>) é adicionado automaticamente quando não houver palavra de opt-out no texto.
-                </p>
-              </div>
-            </div>
-          )}
-
-          {step === 2 && (
-            <div className="space-y-3">
-              <div>
-                <Label>Tags do público</Label>
-                <p className="text-xs text-muted-foreground mb-2">
-                  Vazio = todos os contatos elegíveis. Múltiplas tags = contatos que contenham TODAS.
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  {tagOptions.length === 0 && (
-                    <p className="text-sm text-muted-foreground">Sem tags cadastradas.</p>
-                  )}
-                  {tagOptions.map((t) => {
-                    const on = selectedTags.includes(t);
-                    return (
-                      <Badge
-                        key={t}
-                        variant={on ? "default" : "outline"}
-                        className="cursor-pointer"
-                        onClick={() =>
-                          setSelectedTags((prev) => (on ? prev.filter((x) => x !== t) : [...prev, t]))
-                        }
-                      >
-                        {t}
-                      </Badge>
-                    );
-                  })}
+            <>
+              <div className="grid md:grid-cols-3 gap-4">
+                <div className="space-y-1.5">
+                  <Label>Nome da campanha *</Label>
+                  <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Digite o nome da campanha" maxLength={160} />
                 </div>
-              </div>
-              <div className="rounded-md border p-3 bg-muted/30 text-sm space-y-1">
-                <p>Resumo de público:</p>
-                <ul className="text-xs space-y-0.5">
-                  <li className="text-success">✓ Elegíveis: <strong>{preview?.eligible ?? audienceCount ?? "…"}</strong></li>
-                  <li className="text-warning">⚠ Bloqueados por opt-out: <strong>{preview?.blockedOptOut ?? "…"}</strong></li>
-                  <li className="text-muted-foreground">⊘ Sem consentimento: <strong>{preview?.blockedConsent ?? "…"}</strong></li>
-                </ul>
-                <p className="text-[11px] text-muted-foreground pt-1">Apenas os elegíveis serão enfileirados.</p>
-              </div>
-            </div>
-          )}
-
-          {step === 3 && (
-            <div className="space-y-3">
-              <div>
-                <Label>Canais</Label>
-                <p className="text-xs text-muted-foreground mb-2">
-                  Envios são distribuídos em round-robin entre os canais selecionados.
-                </p>
-                <div className="space-y-2">
-                  {channels.length === 0 && (
-                    <p className="text-sm text-muted-foreground">Nenhum canal ativo. Cadastre um em Canais.</p>
-                  )}
-                  {channels.map((c) => {
-                    const on = selectedChannels.includes(c.id);
-                    return (
-                      <label
-                        key={c.id}
-                        className="flex items-center gap-3 p-2 rounded border hover:bg-muted/30 cursor-pointer"
-                      >
-                        <Checkbox
-                          checked={on}
-                          onCheckedChange={(v) =>
-                            setSelectedChannels((prev) =>
-                              v ? [...prev, c.id] : prev.filter((x) => x !== c.id),
-                            )
-                          }
-                        />
-                        <div className="flex-1">
-                          <p className="text-sm font-medium">{c.label}</p>
-                          <p className="text-xs text-muted-foreground">{c.phone_e164} • limite {c.daily_limit}/dia</p>
-                        </div>
-                      </label>
-                    );
-                  })}
-                </div>
-              </div>
-              <div className="space-y-1">
-                <Label>Velocidade (mensagens por minuto, por canal)</Label>
-                <Input
-                  type="number"
-                  min={1}
-                  max={120}
-                  value={ratePerMin}
-                  onChange={(e) => setRatePerMin(parseInt(e.target.value || "1", 10))}
-                />
-              </div>
-            </div>
-          )}
-
-          {step === 4 && (
-            <div className="space-y-3">
-              <label className="flex items-center gap-2">
-                <Checkbox checked={scheduleNow} onCheckedChange={(v) => setScheduleNow(!!v)} />
-                Enviar imediatamente após iniciar
-              </label>
-              {!scheduleNow && (
-                <div className="space-y-1">
-                  <Label>Data e hora</Label>
+                <div className="space-y-1.5">
+                  <Label>Agendamento</Label>
                   <Input
                     type="datetime-local"
                     value={scheduledAt}
+                    min={new Date(Date.now() + 60_000).toISOString().slice(0, 16)}
                     onChange={(e) => setScheduledAt(e.target.value)}
                   />
+                  <p className="text-[11px] text-muted-foreground">Vazio = envio imediato ao iniciar</p>
                 </div>
-              )}
-              <div className="rounded-md border p-3 bg-muted/30 text-sm space-y-1">
-                <p><strong>Resumo</strong></p>
-                <p>Nome: {name || "—"}</p>
-                <p>Elegíveis: {preview?.eligible ?? audienceCount ?? "—"}</p>
-                <p>Bloqueados (opt-out / sem consent): {(preview?.blockedOptOut ?? 0) + (preview?.blockedConsent ?? 0)}</p>
-                <p>Canais: {selectedChannels.length}</p>
-                <p>Velocidade: {ratePerMin} msg/min/canal</p>
-                <p>Envio: {scheduleNow ? "imediato" : scheduledAt || "—"}</p>
+                <div className="space-y-1.5">
+                  <Label>Canal *</Label>
+                  <Select value={channelId} onValueChange={setChannelId}>
+                    <SelectTrigger><SelectValue placeholder="Selecione um canal" /></SelectTrigger>
+                    <SelectContent>
+                      {channels.length === 0 && <div className="px-3 py-2 text-sm text-muted-foreground">Nenhum canal ativo</div>}
+                      {channels.map((c: any) => (
+                        <SelectItem key={c.id} value={c.id}>
+                          {c.label} <span className="text-muted-foreground text-xs ml-1">· {c.status}</span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
+
+              <Card>
+                <CardContent className="p-4 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="font-medium">Destinatários</h3>
+                      <p className="text-xs text-muted-foreground">Escolha como selecionar os contatos da campanha</p>
+                    </div>
+                    <Badge variant="outline" className={eligibleCount > 0 ? "border-success text-success" : ""}>
+                      {eligibleCount === 1 ? "1 contato" : `${eligibleCount} contatos`}
+                    </Badge>
+                  </div>
+
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                    <MethodCard icon={List} title="Listas de Contatos" subtitle="Usar listas pré-definidas"
+                      active={method === "list"} onClick={() => { setMethod("list"); setResolved([]); setSummary(emptySummary()); }} />
+                    <MethodCard icon={Tag} title="Filtrar por Etiquetas" subtitle="Selecionar por etiquetas"
+                      active={method === "tags"} onClick={() => { setMethod("tags"); setResolved([]); setSummary(emptySummary()); }} />
+                    <MethodCard icon={Users} title="Grupos do Sistema" subtitle="Disponível apenas para WhatsApp Web"
+                      disabled tooltip="Disponível apenas para WhatsApp Web" />
+                    <MethodCard icon={FileSpreadsheet} title="Importar Planilha" subtitle="Upload de arquivo CSV/Excel"
+                      active={method === "import"} onClick={() => { setMethod("import"); setResolved([]); setSummary(emptySummary()); }} />
+                    <MethodCard icon={UserPlus} title="Adicionar Manualmente" subtitle="Incluir contatos um a um"
+                      active={method === "manual"} onClick={() => { setMethod("manual"); setResolved([]); setSummary(emptySummary()); }} />
+                  </div>
+
+                  {method && (
+                    <div className="rounded-lg border bg-muted/10 p-4 space-y-3">
+                      {method === "list" && (
+                        <div className="flex gap-2 items-end">
+                          <div className="flex-1 space-y-1.5">
+                            <Label>Selecione a lista de contatos</Label>
+                            <Select value={listId} onValueChange={setListId}>
+                              <SelectTrigger><SelectValue placeholder="Escolha uma lista" /></SelectTrigger>
+                              <SelectContent>
+                                {lists.length === 0 && <div className="px-3 py-2 text-sm text-muted-foreground">Nenhuma lista cadastrada</div>}
+                                {lists.map((l: any) => (
+                                  <SelectItem key={l.id} value={l.id}>{l.name} <span className="text-muted-foreground text-xs">· {l.count}</span></SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <Button onClick={runPreview} disabled={!listId}>Carregar</Button>
+                        </div>
+                      )}
+
+                      {method === "tags" && (
+                        <div className="space-y-3">
+                          <div className="space-y-1.5">
+                            <Label>Etiquetas</Label>
+                            <div className="flex flex-wrap gap-2">
+                              {tagOptions.length === 0 && <p className="text-sm text-muted-foreground">Nenhuma etiqueta cadastrada</p>}
+                              {tagOptions.map((t) => {
+                                const on = tagSelection.includes(t);
+                                return (
+                                  <Badge key={t} variant={on ? "default" : "outline"} className="cursor-pointer"
+                                    onClick={() => setTagSelection((prev) => on ? prev.filter((x) => x !== t) : [...prev, t])}>
+                                    {t}
+                                  </Badge>
+                                );
+                              })}
+                            </div>
+                          </div>
+                          <RadioGroup value={tagMatch} onValueChange={(v) => setTagMatch(v as "any" | "all")} className="flex gap-4">
+                            <label className="flex items-center gap-2 text-sm cursor-pointer">
+                              <RadioGroupItem value="any" /> Contém qualquer etiqueta
+                            </label>
+                            <label className="flex items-center gap-2 text-sm cursor-pointer">
+                              <RadioGroupItem value="all" /> Contém todas as etiquetas
+                            </label>
+                          </RadioGroup>
+                          <Button onClick={runPreview} disabled={tagSelection.length === 0}>Buscar contatos</Button>
+                        </div>
+                      )}
+
+                      {method === "import" && (
+                        <div className="space-y-2">
+                          <Label>Arquivo CSV ou Excel</Label>
+                          <Input type="file" accept=".csv,.xlsx,.xls" onChange={handleFile} />
+                          <p className="text-[11px] text-muted-foreground">
+                            Colunas esperadas: <code>nome</code>, <code>telefone</code>, <code>email</code> (opcional), <code>etiquetas</code> (separadas por vírgula), <code>consentimento</code> (true/false).
+                          </p>
+                          {importedRows.length > 0 && (
+                            <Button onClick={runPreview}>Validar {importedRows.length} linha(s)</Button>
+                          )}
+                        </div>
+                      )}
+
+                      {method === "manual" && (
+                        <div className="space-y-3">
+                          <div className="grid md:grid-cols-[1fr_1fr_auto_auto] gap-2 items-end">
+                            <div className="space-y-1"><Label className="text-xs">Nome</Label><Input value={mName} onChange={(e) => setMName(e.target.value)} placeholder="Nome do contato" /></div>
+                            <div className="space-y-1"><Label className="text-xs">Telefone</Label><Input value={mPhone} onChange={(e) => setMPhone(e.target.value)} placeholder="+55 11 99999-9999" /></div>
+                            <label className="flex items-center gap-2 text-xs h-9"><Checkbox checked={mConsent} onCheckedChange={(v) => setMConsent(!!v)} />Consentimento</label>
+                            <Button onClick={addManual} type="button">Adicionar</Button>
+                          </div>
+                          {manualRows.length > 0 && (
+                            <div className="space-y-2">
+                              <div className="text-xs text-muted-foreground">{manualRows.length} contato(s) adicionado(s)</div>
+                              <div className="flex flex-wrap gap-2">
+                                {manualRows.map((r, i) => (
+                                  <Badge key={i} variant="outline" className="gap-1">
+                                    {r.name} · {r.phone}
+                                    <button onClick={() => setManualRows((rows) => rows.filter((_, j) => j !== i))}><X className="h-3 w-3" /></button>
+                                  </Badge>
+                                ))}
+                              </div>
+                              <Button onClick={runPreview}>Validar contatos</Button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {(resolved.length > 0 || method) && (
+                    <>
+                      <ComplianceSummary summary={summary} />
+                      <RecipientTable contacts={resolved} />
+                    </>
+                  )}
+                </CardContent>
+              </Card>
+            </>
+          )}
+
+          {step === 2 && (
+            <div className="space-y-5">
+              <Card>
+                <CardContent className="p-4 space-y-3">
+                  <div className="space-y-1.5">
+                    <Label>Mensagem da campanha *</Label>
+                    <Textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={6} maxLength={4096} />
+                    <div className="flex flex-wrap gap-2">
+                      {["{{nome}}", "{{telefone}}", "{{empresa}}"].map((v) => (
+                        <Badge key={v} variant="outline" className="cursor-pointer font-mono text-xs"
+                          onClick={() => setMessage((m) => m + " " + v)}>+ {v}</Badge>
+                      ))}
+                    </div>
+                  </div>
+                  {warnings.length > 0 && (
+                    <div className="rounded-md border border-warning/40 bg-warning/5 p-3 text-xs text-warning space-y-1">
+                      {warnings.map((w) => <p key={w}>⚠ {w}</p>)}
+                    </div>
+                  )}
+                  <div>
+                    <Label className="text-xs text-muted-foreground">Pré-visualização (1º elegível)</Label>
+                    <p className="text-sm whitespace-pre-wrap bg-muted/40 rounded p-3 border mt-1">{previewMsg}</p>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardContent className="p-4 space-y-3">
+                  <h3 className="font-medium text-sm">Configurações de envio</h3>
+                  <div className="grid md:grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label>Velocidade (msg/min/canal)</Label>
+                      <Input type="number" min={1} max={120} value={ratePerMin} onChange={(e) => setRatePerMin(parseInt(e.target.value || "1", 10))} />
+                      <p className="text-[11px] text-muted-foreground">Intervalo aprox.: {(60 / Math.max(ratePerMin, 1)).toFixed(1)}s entre mensagens</p>
+                    </div>
+                    <div className="space-y-2 pt-5">
+                      <label className="flex items-center gap-2 text-sm"><Checkbox checked disabled /> Respeitar horário comercial do canal</label>
+                      <label className="flex items-center gap-2 text-sm"><Checkbox checked={autoPause} onCheckedChange={(v) => setAutoPause(!!v)} /> Pausar automaticamente em caso de muitos erros</label>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardContent className="p-4 space-y-2 text-sm">
+                  <h3 className="font-medium">Resumo final</h3>
+                  <div className="grid md:grid-cols-2 gap-y-1 gap-x-4">
+                    <p><span className="text-muted-foreground">Nome:</span> {name}</p>
+                    <p><span className="text-muted-foreground">Canal:</span> {channels.find((c: any) => c.id === channelId)?.label ?? "—"}</p>
+                    <p><span className="text-muted-foreground">Agendamento:</span> {scheduledAt ? format(new Date(scheduledAt), "dd/MM/yyyy HH:mm", { locale: ptBR }) : "Imediato"}</p>
+                    <p><span className="text-muted-foreground">Método:</span> {method}</p>
+                    <p className="text-success"><span className="text-muted-foreground">Elegíveis:</span> {summary.eligible}</p>
+                    <p className="text-warning"><span className="text-muted-foreground">Bloqueados:</span> {summary.blockedOptOut + summary.blockedNoConsent + summary.invalidPhone + summary.duplicates}</p>
+                  </div>
+                  <div className="pt-2">
+                    <label className="flex items-center gap-2 text-sm">
+                      <Checkbox checked={initiate} onCheckedChange={(v) => setInitiate(!!v)} />
+                      Iniciar/agendar imediatamente após criar (desmarque para salvar como rascunho)
+                    </label>
+                  </div>
+                </CardContent>
+              </Card>
             </div>
           )}
         </div>
 
-        <DialogFooter className="flex items-center justify-between sm:justify-between">
-          <Button
-            variant="ghost"
-            disabled={step === 1}
-            onClick={() => setStep((s) => s - 1)}
-          >
-            <ArrowLeft className="h-4 w-4 mr-1" /> Voltar
-          </Button>
-          {step < 4 ? (
-            <Button onClick={() => setStep((s) => s + 1)}>
-              Próximo <ArrowRight className="h-4 w-4 ml-1" />
-            </Button>
-          ) : (
-            <Button onClick={() => save.mutate()} disabled={save.isPending}>
-              Criar campanha
-            </Button>
-          )}
-        </DialogFooter>
+        <footer className="px-6 py-4 border-t flex items-center justify-between gap-3 bg-muted/10">
+          <span className="text-xs text-muted-foreground">Etapa {step} de 2</span>
+          <div className="flex gap-2">
+            <Button variant="ghost" onClick={() => { setOpen(false); reset(); }}>Cancelar</Button>
+            {step === 2 && (
+              <Button variant="outline" onClick={() => setStep(1)}>
+                <ArrowLeft className="h-4 w-4 mr-1" /> Voltar
+              </Button>
+            )}
+            {step === 1 ? (
+              <Button disabled={!canAdvance} onClick={() => setStep(2)}>Próxima</Button>
+            ) : (
+              <Button disabled={!canSubmit || submit.isPending} onClick={() => submit.mutate()}>
+                {!initiate ? "Salvar rascunho" : scheduledAt ? "Agendar campanha" : "Iniciar campanha"}
+              </Button>
+            )}
+          </div>
+        </footer>
       </DialogContent>
     </Dialog>
   );
