@@ -21,6 +21,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { Plus, Upload, Trash2, Pencil, Ban, RotateCcw, Search, Tag as TagIcon } from "lucide-react";
 import { toast } from "sonner";
 import { normalizePhoneE164, formatPhone } from "@/lib/phone";
+import { ContactListsTab } from "@/components/contacts/contact-lists-tab";
 
 export const Route = createFileRoute("/_authenticated/contacts")({
   component: ContactsPage,
@@ -54,10 +55,14 @@ function ContactsPage() {
       <Tabs defaultValue="contacts" className="space-y-4">
         <TabsList>
           <TabsTrigger value="contacts">Contatos</TabsTrigger>
+          <TabsTrigger value="lists">Listas</TabsTrigger>
           <TabsTrigger value="optout">Palavras de opt-out</TabsTrigger>
         </TabsList>
         <TabsContent value="contacts">
           <ContactsTab canManage={canManage} />
+        </TabsContent>
+        <TabsContent value="lists">
+          <ContactListsTab canManage={canManage} />
         </TabsContent>
         <TabsContent value="optout">
           <OptOutTab isAdmin={isAdmin} />
