@@ -154,7 +154,7 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
   const [method, setMethod] = useState<Method | null>(null);
 
   // method state
-  const [listId, setListId] = useState<string>("");
+  const [listIds, setListIds] = useState<string[]>([]);
   const [tagSelection, setTagSelection] = useState<string[]>([]);
   const [tagMatch, setTagMatch] = useState<"any" | "all">("any");
   const [manualRows, setManualRows] = useState<Array<{ name: string; phone: string; consent: boolean; tags: string[] }>>([]);
@@ -175,7 +175,7 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
 
   const reset = () => {
     setStep(1); setName(""); setScheduledAt(""); setChannelId(""); setMethod(null);
-    setListId(""); setTagSelection([]); setTagMatch("any");
+    setListIds([]); setTagSelection([]); setTagMatch("any");
     setManualRows([]); setImportedRows([]);
     setResolved([]); setSummary(emptySummary());
     setMessage("Olá {{nome}}, "); setRatePerMin(20); setAutoPause(true); setInitiate(true);
@@ -213,8 +213,8 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
   async function runPreview() {
     try {
       let res: { contacts: ResolvedContact[]; summary: ResolveSummary } | null = null;
-      if (method === "list" && listId) {
-        res = await previewFn({ data: { method: "list", listId } });
+      if (method === "list" && listIds.length) {
+        res = await previewFn({ data: { method: "list", listIds } });
       } else if (method === "tags" && tagSelection.length) {
         res = await previewFn({ data: { method: "tags", tags: tagSelection, match: tagMatch } });
       } else if (method === "manual" && manualRows.length) {
@@ -305,7 +305,7 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
         consent: true,
       }));
       const methodSummary: any = {};
-      if (method === "list") methodSummary.listId = listId;
+      if (method === "list") methodSummary.listIds = listIds;
       if (method === "tags") { methodSummary.tags = tagSelection; methodSummary.match = tagMatch; }
       return createFn({
         data: {
