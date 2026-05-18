@@ -82,6 +82,8 @@ export const Route = createFileRoute("/api/public/hooks/process-queue")({
           .in("id", ids);
 
         let sent = 0, failed = 0, rescheduled = 0, skipped = 0;
+        const secret = process.env.CHANNEL_KEY_SECRET;
+        const keyCache = new Map<string, string | null>();
 
         for (const item of items ?? []) {
           const ch: any = item.channel;
@@ -117,8 +119,42 @@ export const Route = createFileRoute("/api/public/hooks/process-queue")({
             rescheduled++; continue;
           }
 
+          if (!secret) {
+            await supabaseAdmin.from("message_queue").update({
+              status: "failed", last_error: "CHANNEL_KEY_SECRET ausente no servidor",
+            }).eq("id", item.id);
+            if (item.campaign_recipient_id) {
+              await supabaseAdmin.from("campaign_recipients").update({
+                status: "failed", error: "CHANNEL_KEY_SECRET ausente",
+              }).eq("id", item.campaign_recipient_id);
+            }
+            failed++; continue;
+          }
+
+          let apiKey = keyCache.get(ch.id) ?? null;
+          if (!keyCache.has(ch.id)) {
+            const { data: keyData, error: keyErr } = await supabaseAdmin
+              .rpc("get_channel_api_key", { p_channel_id: ch.id, p_secret: secret });
+            apiKey = keyErr ? null : ((keyData as unknown as string) || null);
+            keyCache.set(ch.id, apiKey);
+          }
+          if (!apiKey) {
+            await supabaseAdmin.from("message_queue").update({
+              status: "failed", last_error: "Chave da Ziontalk não configurada para este canal",
+            }).eq("id", item.id);
+            await supabaseAdmin.from("channels").update({
+              status: "error", last_error: "Chave da Ziontalk não configurada",
+            }).eq("id", ch.id);
+            if (item.campaign_recipient_id) {
+              await supabaseAdmin.from("campaign_recipients").update({
+                status: "failed", error: "Chave da Ziontalk não configurada",
+              }).eq("id", item.campaign_recipient_id);
+            }
+            failed++; continue;
+          }
+
           const result = await zionSendMessage({
-            apiKey: ch.zion_api_key, phone: ct.phone_e164, msg: item.rendered_text,
+            apiKey, phone: ct.phone_e164, msg: item.rendered_text,
           });
           await logSend({
             channel_id: ch.id, contact_id: ct.id, campaign_id: null,
