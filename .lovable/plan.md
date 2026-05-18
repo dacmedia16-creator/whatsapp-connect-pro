@@ -1,66 +1,58 @@
-## Objetivo
+## Status atual (já implementado)
 
-Permitir que administradores rotacionem a chave ZionTalk de cada canal sem perder o histórico, mantendo apenas uma chave ativa por vez, e podendo revogar versões antigas (invalidá-las imediatamente).
+A maior parte da lista já está pronta de iterações anteriores:
 
-## Modelagem
+- **Rotas** `/inbox`, `/reports`, `/settings` — existem em `routeTree.gen.ts` e no sidebar, todos os links funcionam.
+- **API key ZionTalk protegida** — criptografada com `pgp_sym_encrypt` (server-side), nunca exposta no front, UI mostra apenas hint de 4 dígitos. Rotação + versionamento + revogação já implementados em `channel_api_keys`.
+- **Webhook inbound** — `/api/public/webhooks/ziontalk` valida `ZION_WEBHOOK_TOKEN`, identifica canal/contato, cria conversa, insere `messages.direction='in'`. Trigger `fn_auto_opt_out_on_inbound` aplica opt-out automático.
+- **Fila** — `/api/public/hooks/process-queue` faz claim atômico (update + `eq status pending`), retry com backoff, marca `failed` após 3 tentativas, atualiza `campaign_recipients` + `campaign_events`.
+- **Horário comercial tz-aware** — usa `Intl.DateTimeFormat` com `business_hours.tz`, reagenda fora da janela.
+- **README** — já documenta stack, env vars, setup, webhook, checklist.
 
-Nova tabela `public.channel_api_keys`:
+## Itens que NÃO posso fazer
 
-- `channel_id` (fk canal)
-- `version` (int, incrementa por canal — 1, 2, 3…)
-- `key_encrypted` (bytea, `pgp_sym_encrypt`)
-- `hint` (últimos 4 dígitos)
-- `status` (`active` | `revoked` | `superseded`)
-- `created_by`, `created_at`, `revoked_at`, `revoked_by`, `revoked_reason`
-- índice único parcial: apenas **1** linha `active` por `channel_id`
+- **Remover `.env` / editar `.gitignore` / criar `.env.example`** — o `.env` é gerado e gerenciado pela Lovable Cloud automaticamente, nunca é commitado em repositório público, e a plataforma não permite editá-lo manualmente. Não há ação necessária aqui.
 
-A coluna `channels.zion_api_key_encrypted` deixa de ser a fonte da verdade — passa a refletir a chave ativa (mantida para compatibilidade do `get_channel_api_key`, atualizada por trigger sempre que a versão ativa muda). `channels.zion_api_key_hint` também segue espelhando.
+## Trabalho restante (proposta)
 
-## Funções SQL (SECURITY DEFINER, restritas a service_role)
+Vou focar nos gaps reais de produto/compliance. Divido em fases para entregar em ordem de impacto.
 
-- `rotate_channel_api_key(p_channel_id, p_plain_key, p_secret, p_user)`:
-  marca a chave atual como `superseded`, insere nova versão `active`, atualiza colunas espelho em `channels`.
-- `revoke_channel_api_key(p_key_id, p_user, p_reason)`:
-  marca a versão como `revoked`. Se era a `active`, limpa a chave do canal e marca status `disconnected` — bloqueia novos envios até nova rotação.
-- `get_channel_api_key(channel_id, secret)`: continua existindo, mas lê de `channel_api_keys` (active mais recente). Mantém fallback legado.
+### Fase 1 — Compliance em campanhas (alta prioridade)
+1. Em `campaigns.$campaignId.tsx`, antes de "Iniciar campanha", calcular e exibir resumo:
+   - elegíveis (consent=true, opt_out_at null)
+   - bloqueados por opt-out
+   - bloqueados por falta de consentimento
+2. No enfileiramento, filtrar esses contatos (não criar `message_queue` para inelegíveis; marcar `campaign_recipients` como `opted_out`/`no_consent`).
+3. Validação de template:
+   - bloquear template vazio ou só whitespace
+   - exigir variável de identificação do remetente (ex.: `{{empresa}}` ou texto fixo configurável)
+   - sugerir rodapé de descadastro automático (toggle "anexar instrução de opt-out")
 
-## Server functions (`src/lib/channels.functions.ts`)
+### Fase 2 — Inbox profissional
+1. Ao abrir conversa: zerar `unread_count` (server fn).
+2. Filtros: canal, status, atendente, tag (controles + query).
+3. Notas internas: checkbox "nota interna" → `messages.internal_note=true`, não envia para ZionTalk, renderiza com estilo diferente.
+4. Header da conversa: badges de consentimento e opt-out.
+5. Bloquear composer (textarea + botão enviar) quando contato sem consent ou com opt-out, com mensagem explicativa.
+6. Empty state quando nenhuma conversa selecionada.
 
-- `rotateChannelKeyFn(channelId, newKey)` — substitui `updateChannelKeyFn`; chama `rotate_channel_api_key` via RPC.
-- `revokeChannelKeyFn(keyId, reason?)` — chama `revoke_channel_api_key`.
-- `listChannelKeysFn(channelId)` — retorna histórico (sem a chave em texto): `version`, `hint`, `status`, datas, autor.
-- `createChannelFn`: passa a usar `rotate_channel_api_key` para criar a versão 1.
+### Fase 3 — Relatórios com gráficos
+Usando `recharts` (já no shadcn):
+1. Filtro de período (7d / 30d / custom).
+2. Gráfico de envios por dia (linha).
+3. Por campanha: enviadas, falhas, opt-outs, respostas, taxa de resposta (tabela + barras).
+4. Por canal: enviados hoje vs limite, erros hoje, status (cards).
+5. Por atendente: conversas atribuídas, resolvidas, tempo médio de primeira resposta (server fn agrega `messages` + `conversations`).
 
-Todas exigem role `admin` e usam `process.env.CHANNEL_KEY_SECRET`.
+### Fase 4 — Polimento de fila
+1. Backoff exponencial real: `scheduled_for = now + 2^attempts * 60s` (já tem linear, troco por exponencial).
+2. Coluna `attempts` é incrementada corretamente no claim (hoje seta sempre `=1`).
 
-## UI (`src/routes/_authenticated/channels.tsx`)
+### Fase 5 — README
+Reorganizar em seções: Visão geral, Stack, Variáveis, Setup local, Setup Lovable Cloud, Integração ZionTalk, Webhook, Worker, Checklist de produção, **Boas práticas de uso autorizado e LGPD/consentimento**.
 
-Botão "Rotacionar chave" abre dialog com nova chave (a antiga é marcada como superseded automaticamente). Aba/seção "Histórico de chaves" por canal mostrando tabela:
+---
 
-```text
-versão | hint  | status      | criada em | criada por | ações
-v3     | …a1b2 | active      | 18/05     | João       | Revogar
-v2     | …9f0c | superseded  | 10/05     | Maria      | Revogar
-v1     | …2e3d | revoked     | 01/05     | João       | —
-```
+## Pergunta
 
-Confirmação obrigatória (`AlertDialog`) antes de revogar a chave ativa, avisando que envios serão bloqueados até nova rotação.
-
-## RLS / segurança
-
-- `channel_api_keys` com RLS habilitada.
-- Política SELECT: somente `admin` (mesmo padrão de `channels`).
-- Sem políticas de INSERT/UPDATE/DELETE — alterações vão exclusivamente pelas funções `SECURITY DEFINER` chamadas com service_role pelas server functions.
-- `key_encrypted` nunca é retornada à UI; apenas o `hint`.
-
-## Compatibilidade
-
-- Backfill: para cada canal existente com `zion_api_key_encrypted is not null`, criar versão 1 ativa em `channel_api_keys` copiando o blob cifrado.
-- `get_channel_api_key` privilegia `channel_api_keys.active`; só usa fallback de `channels.zion_api_key_encrypted` se a tabela estiver vazia (transição).
-
-## Entregáveis
-
-1. Migration: tabela, índices, trigger de espelhamento, funções `rotate`/`revoke`, atualização de `get_channel_api_key`, backfill, grants.
-2. `channels.functions.ts`: `rotateChannelKeyFn`, `revokeChannelKeyFn`, `listChannelKeysFn`; remoção/alias de `updateChannelKeyFn`.
-3. `channels.tsx`: botão "Rotacionar", lista de histórico por canal, ação "Revogar" com confirmação.
-4. Atualizar wizard de criação de canais para usar o novo fluxo (cria versão 1).
+Posso executar **todas as 5 fases** em sequência neste turno, ou prefere que eu comece só pela **Fase 1 (compliance)** que é a mais crítica para evitar bloqueio do WhatsApp, e seguir as demais em turnos separados?
