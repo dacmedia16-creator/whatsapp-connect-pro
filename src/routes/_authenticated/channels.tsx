@@ -18,11 +18,18 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { useAuth } from "@/hooks/use-auth";
-import { Plus, Plug, Pause, Play, Trash2 } from "lucide-react";
+import { Plus, Plug, Pause, Play, Trash2, KeyRound, Ban } from "lucide-react";
 import { toast } from "sonner";
 import { normalizePhoneE164, formatPhone } from "@/lib/phone";
 import { testChannelFn } from "@/lib/ziontalk.functions";
-import { createChannelFn } from "@/lib/channels.functions";
+import { createChannelFn, rotateChannelKeyFn, revokeChannelKeyFn, listChannelKeysFn } from "@/lib/channels.functions";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { format } from "date-fns";
+import { ptBR } from "date-fns/locale";
 
 export const Route = createFileRoute("/_authenticated/channels")({
   component: ChannelsPage,
@@ -188,6 +195,7 @@ function ChannelsPage() {
                         <Button size="sm" variant="outline" onClick={() => test.mutate(c.id)} disabled={test.isPending}>
                           Testar
                         </Button>
+                        <ChannelKeysDialog channelId={c.id} channelLabel={c.label} />
                         <Button size="icon" variant="ghost" onClick={() => togglePause.mutate(c)}>
                           {c.status === "paused" ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
                         </Button>
@@ -208,5 +216,160 @@ function ChannelsPage() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+type KeyRow = {
+  id: string;
+  version: number;
+  hint: string;
+  status: "active" | "superseded" | "revoked";
+  created_at: string;
+  created_by: string | null;
+  revoked_at: string | null;
+  revoked_reason: string | null;
+};
+
+function ChannelKeysDialog({ channelId, channelLabel }: { channelId: string; channelLabel: string }) {
+  const [open, setOpen] = useState(false);
+  const [newKey, setNewKey] = useState("");
+  const qc = useQueryClient();
+  const listKeys = useServerFn(listChannelKeysFn);
+  const rotateKey = useServerFn(rotateChannelKeyFn);
+  const revokeKey = useServerFn(revokeChannelKeyFn);
+
+  const { data, isFetching } = useQuery({
+    queryKey: ["channel-keys", channelId],
+    queryFn: async () => (await listKeys({ data: { channelId } })).keys as KeyRow[],
+    enabled: open,
+  });
+
+  const rotateMut = useMutation({
+    mutationFn: async () => {
+      if (newKey.trim().length < 8) throw new Error("Chave muito curta");
+      await rotateKey({ data: { channelId, zion_api_key: newKey.trim() } });
+    },
+    onSuccess: () => {
+      toast.success("Chave rotacionada — nova versão ativa");
+      setNewKey("");
+      qc.invalidateQueries({ queryKey: ["channel-keys", channelId] });
+      qc.invalidateQueries({ queryKey: ["channels"] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const revokeMut = useMutation({
+    mutationFn: async (keyId: string) => revokeKey({ data: { keyId } }),
+    onSuccess: () => {
+      toast.success("Chave revogada");
+      qc.invalidateQueries({ queryKey: ["channel-keys", channelId] });
+      qc.invalidateQueries({ queryKey: ["channels"] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const statusBadge = (s: KeyRow["status"]) =>
+    s === "active"
+      ? "border-success text-success"
+      : s === "superseded"
+      ? "border-muted-foreground/40 text-muted-foreground"
+      : "border-destructive text-destructive";
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button size="sm" variant="outline">
+          <KeyRound className="h-4 w-4 mr-1" /> Chaves
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Chaves de API — {channelLabel}</DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-2">
+          <Label>Rotacionar (nova chave)</Label>
+          <div className="flex gap-2">
+            <Input
+              type="password"
+              value={newKey}
+              onChange={(e) => setNewKey(e.target.value)}
+              placeholder="Cole a nova API Key"
+            />
+            <Button onClick={() => rotateMut.mutate()} disabled={rotateMut.isPending}>
+              Rotacionar
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            A chave atual será marcada como <em>superseded</em> e a nova passa a ser usada nos envios.
+          </p>
+        </div>
+
+        <div className="border rounded-md">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Versão</TableHead>
+                <TableHead>Hint</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Criada em</TableHead>
+                <TableHead className="text-right">Ações</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {isFetching && (
+                <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-4">Carregando…</TableCell></TableRow>
+              )}
+              {!isFetching && (data ?? []).length === 0 && (
+                <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-4">Sem histórico ainda.</TableCell></TableRow>
+              )}
+              {(data ?? []).map((k) => (
+                <TableRow key={k.id}>
+                  <TableCell className="font-mono">v{k.version}</TableCell>
+                  <TableCell className="font-mono text-muted-foreground">…{k.hint}</TableCell>
+                  <TableCell>
+                    <Badge variant="outline" className={statusBadge(k.status)}>{k.status}</Badge>
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {format(new Date(k.created_at), "dd/MM/yyyy HH:mm", { locale: ptBR })}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {k.status !== "revoked" ? (
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button size="sm" variant="ghost" className="text-destructive">
+                            <Ban className="h-4 w-4 mr-1" /> Revogar
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>Revogar chave v{k.version}?</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              {k.status === "active"
+                                ? "Esta é a chave ATIVA. Revogá-la bloqueia novos envios deste canal até que você rotacione uma nova chave."
+                                : "A chave será invalidada permanentemente."}
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                            <AlertDialogAction onClick={() => revokeMut.mutate(k.id)}>
+                              Revogar
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">
+                        {k.revoked_at && format(new Date(k.revoked_at), "dd/MM/yyyy", { locale: ptBR })}
+                      </span>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
