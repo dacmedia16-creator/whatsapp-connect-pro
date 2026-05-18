@@ -1,0 +1,1 @@
+revoke execute on function public.fn_log_campaign_event() from public, anon, authenticated;

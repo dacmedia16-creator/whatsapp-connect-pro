@@ -12,12 +12,14 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { useAuth } from "@/hooks/use-auth";
-import { ArrowLeft, Play, Pause, Send, Square, RefreshCw, Radio } from "lucide-react";
+import { ArrowLeft, Play, Pause, Send, Square, RefreshCw, Radio, Inbox, CheckCircle2, XCircle, Ban, Truck, ChevronLeft, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { enqueueCampaignFn, processQueueFn } from "@/lib/ziontalk.functions";
 import { formatPhone } from "@/lib/phone";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 export const Route = createFileRoute("/_authenticated/campaigns/$campaignId")({
   component: CampaignDetail,
@@ -33,6 +35,9 @@ function CampaignDetail() {
   const processBatch = useServerFn(processQueueFn);
   const [live, setLive] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
+  const [eventPage, setEventPage] = useState(0);
+  const [eventFilter, setEventFilter] = useState<"all" | "queued" | "sent" | "delivered" | "failed" | "opted_out">("all");
+  const PAGE_SIZE = 25;
 
   const { data: campaign, isLoading } = useQuery({
     queryKey: ["campaign", campaignId],
@@ -99,6 +104,14 @@ function CampaignDetail() {
           qc.invalidateQueries({ queryKey: ["campaign-recipients", campaignId] });
         },
       )
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "campaign_events", filter: `campaign_id=eq.${campaignId}` },
+        () => {
+          setLastUpdate(new Date());
+          qc.invalidateQueries({ queryKey: ["campaign-events", campaignId] });
+        },
+      )
       .subscribe((status) => {
         setLive(status === "SUBSCRIBED");
       });
@@ -106,6 +119,26 @@ function CampaignDetail() {
       supabase.removeChannel(channel);
     };
   }, [campaignId, qc]);
+
+  const { data: eventsData } = useQuery({
+    queryKey: ["campaign-events", campaignId, eventFilter, eventPage],
+    queryFn: async () => {
+      let q = supabase
+        .from("campaign_events")
+        .select("id, event_type, error, created_at, contact:contacts(name, phone_e164), channel:channels(label)", { count: "exact" })
+        .eq("campaign_id", campaignId);
+      if (eventFilter !== "all") q = q.eq("event_type", eventFilter);
+      const from = eventPage * PAGE_SIZE;
+      const to = from + PAGE_SIZE - 1;
+      const { data, count, error } = await q.order("created_at", { ascending: false }).range(from, to);
+      if (error) throw error;
+      return { rows: data ?? [], count: count ?? 0 };
+    },
+    refetchInterval: live ? false : 15000,
+  });
+  const eventRows = eventsData?.rows ?? [];
+  const eventTotal = eventsData?.count ?? 0;
+  const totalPages = Math.max(1, Math.ceil(eventTotal / PAGE_SIZE));
 
   const startMut = useMutation({
     mutationFn: async () => enqueue({ data: { campaignId } }),
@@ -243,17 +276,91 @@ function CampaignDetail() {
 
       <Card>
         <CardContent className="p-0">
-          <div className="flex items-center justify-between p-4 border-b">
-            <h3 className="font-medium">Destinatários (200 mais recentes)</h3>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => qc.invalidateQueries({ queryKey: ["campaign-recipients", campaignId] })}
-            >
-              <RefreshCw className="h-3 w-3 mr-1" /> Atualizar
-            </Button>
-          </div>
-          <Table>
+          <Tabs defaultValue="events">
+            <div className="flex items-center justify-between p-4 border-b gap-3 flex-wrap">
+              <TabsList>
+                <TabsTrigger value="events">Log de eventos</TabsTrigger>
+                <TabsTrigger value="recipients">Destinatários</TabsTrigger>
+              </TabsList>
+              <div className="flex items-center gap-2">
+                <Select value={eventFilter} onValueChange={(v) => { setEventFilter(v as typeof eventFilter); setEventPage(0); }}>
+                  <SelectTrigger className="h-8 w-[160px]"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todos os eventos</SelectItem>
+                    <SelectItem value="queued">Na fila</SelectItem>
+                    <SelectItem value="sent">Enviadas</SelectItem>
+                    <SelectItem value="delivered">Entregues</SelectItem>
+                    <SelectItem value="failed">Erros</SelectItem>
+                    <SelectItem value="opted_out">Opt-out</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    qc.invalidateQueries({ queryKey: ["campaign-events", campaignId] });
+                    qc.invalidateQueries({ queryKey: ["campaign-recipients", campaignId] });
+                  }}
+                >
+                  <RefreshCw className="h-3 w-3 mr-1" /> Atualizar
+                </Button>
+              </div>
+            </div>
+
+            <TabsContent value="events" className="m-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-[170px]">Quando</TableHead>
+                    <TableHead className="w-[140px]">Evento</TableHead>
+                    <TableHead>Contato</TableHead>
+                    <TableHead>Telefone</TableHead>
+                    <TableHead>Canal</TableHead>
+                    <TableHead>Detalhe</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {eventRows.length === 0 && (
+                    <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                      Nenhum evento registrado ainda.
+                    </TableCell></TableRow>
+                  )}
+                  {eventRows.map((e: any) => (
+                    <TableRow key={e.id}>
+                      <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
+                        {format(new Date(e.created_at), "dd/MM HH:mm:ss", { locale: ptBR })}
+                      </TableCell>
+                      <TableCell><EventBadge type={e.event_type} /></TableCell>
+                      <TableCell className="font-medium">{e.contact?.name ?? "—"}</TableCell>
+                      <TableCell className="font-mono text-xs">
+                        {e.contact?.phone_e164 ? formatPhone(e.contact.phone_e164) : "—"}
+                      </TableCell>
+                      <TableCell className="text-sm">{e.channel?.label ?? "—"}</TableCell>
+                      <TableCell className="text-xs text-destructive max-w-xs truncate" title={e.error ?? ""}>
+                        {e.error ?? ""}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+              <div className="flex items-center justify-between p-3 border-t text-sm">
+                <span className="text-muted-foreground">
+                  {eventTotal === 0 ? "0 eventos" : `${eventPage * PAGE_SIZE + 1}–${Math.min((eventPage + 1) * PAGE_SIZE, eventTotal)} de ${eventTotal}`}
+                </span>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" variant="outline" disabled={eventPage === 0} onClick={() => setEventPage((p) => Math.max(0, p - 1))}>
+                    <ChevronLeft className="h-3 w-3" />
+                  </Button>
+                  <span className="text-xs text-muted-foreground">Página {eventPage + 1} / {totalPages}</span>
+                  <Button size="sm" variant="outline" disabled={eventPage + 1 >= totalPages} onClick={() => setEventPage((p) => p + 1)}>
+                    <ChevronRight className="h-3 w-3" />
+                  </Button>
+                </div>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="recipients" className="m-0">
+              <Table>
             <TableHeader>
               <TableRow>
                 <TableHead>Contato</TableHead>
@@ -297,7 +404,9 @@ function CampaignDetail() {
                 </TableRow>
               ))}
             </TableBody>
-          </Table>
+              </Table>
+            </TabsContent>
+          </Tabs>
         </CardContent>
       </Card>
     </div>
@@ -312,5 +421,22 @@ function StatCard({ label, value, cls }: { label: string; value: React.ReactNode
         <p className={`text-2xl font-display mt-1 ${cls ?? ""}`}>{value}</p>
       </CardContent>
     </Card>
+  );
+}
+
+function EventBadge({ type }: { type: string }) {
+  const map: Record<string, { label: string; cls: string; Icon: typeof Inbox }> = {
+    queued: { label: "Na fila", cls: "border-muted-foreground/40 text-muted-foreground", Icon: Inbox },
+    sent: { label: "Enviada", cls: "border-success text-success", Icon: CheckCircle2 },
+    delivered: { label: "Entregue", cls: "border-success text-success", Icon: Truck },
+    failed: { label: "Erro", cls: "border-destructive text-destructive", Icon: XCircle },
+    opted_out: { label: "Opt-out", cls: "border-warning text-warning", Icon: Ban },
+  };
+  const cfg = map[type] ?? { label: type, cls: "", Icon: Inbox };
+  const { Icon } = cfg;
+  return (
+    <Badge variant="outline" className={`gap-1 ${cfg.cls}`}>
+      <Icon className="h-3 w-3" /> {cfg.label}
+    </Badge>
   );
 }

@@ -44,6 +44,42 @@ export type Database = {
         }
         Relationships: []
       }
+      campaign_events: {
+        Row: {
+          campaign_id: string
+          channel_id: string | null
+          contact_id: string | null
+          created_at: string
+          error: string | null
+          event_type: Database["public"]["Enums"]["campaign_event_type"]
+          id: string
+          metadata: Json
+          recipient_id: string | null
+        }
+        Insert: {
+          campaign_id: string
+          channel_id?: string | null
+          contact_id?: string | null
+          created_at?: string
+          error?: string | null
+          event_type: Database["public"]["Enums"]["campaign_event_type"]
+          id?: string
+          metadata?: Json
+          recipient_id?: string | null
+        }
+        Update: {
+          campaign_id?: string
+          channel_id?: string | null
+          contact_id?: string | null
+          created_at?: string
+          error?: string | null
+          event_type?: Database["public"]["Enums"]["campaign_event_type"]
+          id?: string
+          metadata?: Json
+          recipient_id?: string | null
+        }
+        Relationships: []
+      }
       campaign_recipients: {
         Row: {
           campaign_id: string
@@ -626,6 +662,12 @@ export type Database = {
     }
     Enums: {
       app_role: "admin" | "gestor" | "atendente"
+      campaign_event_type:
+        | "queued"
+        | "sent"
+        | "delivered"
+        | "failed"
+        | "opted_out"
       campaign_status: "draft" | "scheduled" | "running" | "paused" | "done"
       channel_status: "connected" | "disconnected" | "error" | "paused"
       channel_strategy: "round_robin" | "specific"
@@ -765,6 +807,13 @@ export const Constants = {
   public: {
     Enums: {
       app_role: ["admin", "gestor", "atendente"],
+      campaign_event_type: [
+        "queued",
+        "sent",
+        "delivered",
+        "failed",
+        "opted_out",
+      ],
       campaign_status: ["draft", "scheduled", "running", "paused", "done"],
       channel_status: ["connected", "disconnected", "error", "paused"],
       channel_strategy: ["round_robin", "specific"],
