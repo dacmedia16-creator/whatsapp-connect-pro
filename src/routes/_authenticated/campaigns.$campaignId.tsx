@@ -162,7 +162,7 @@ function CampaignDetail() {
           ? `${r.message}. Próximo envio: ${format(new Date(r.nextScheduledFor), "HH:mm", { locale: ptBR })}`
           : r.message);
       } else {
-        toast.success(`Lote processado: ${r.sent} enviadas, ${r.failed} falharam, ${r.rescheduled ?? r.skipped} adiadas`);
+        toast.success(`Lote processado: ${r.sent} enviadas, ${r.failed} falharam, ${r.rescheduled} adiadas`);
       }
       qc.invalidateQueries({ queryKey: ["campaign", campaignId] });
       qc.invalidateQueries({ queryKey: ["campaign-stats", campaignId] });
