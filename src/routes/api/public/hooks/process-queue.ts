@@ -281,6 +281,8 @@ export const Route = createFileRoute("/api/public/hooks/process-queue")({
               sent_today_date: today,
               last_error: null,
             }).eq("id", ch.id);
+            // mantém o cache do canal coerente para a próxima iteração do batch
+            channelsCache.set(ch.id, { ...ch, sent_today: sentToday + 1, sent_today_date: today });
             if (item.campaign_recipient_id) {
               await supabaseAdmin.from("campaign_recipients").update({
                 status: "sent", sent_at: new Date().toISOString(), channel_id: ch.id,
