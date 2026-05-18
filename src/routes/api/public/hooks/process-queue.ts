@@ -135,7 +135,7 @@ export const Route = createFileRoute("/api/public/hooks/process-queue")({
           if (!keyCache.has(ch.id)) {
             const { data: keyData, error: keyErr } = await supabaseAdmin
               .rpc("get_channel_api_key", { p_channel_id: ch.id, p_secret: secret });
-            apiKey = keyErr ? null : ((keyData as unknown as string) || null);
+            apiKey = keyErr ? null : (((keyData as unknown as string) || "").trim() || null);
             keyCache.set(ch.id, apiKey);
           }
           if (!apiKey) {

@@ -187,7 +187,7 @@ export const testChannelFn = createServerFn({ method: "POST" })
     const apiKey = await getChannelApiKey(channel.id);
     const res = await fetch("https://app.ziontalk.com/api/send_message/", {
       method: "POST",
-      headers: { Authorization: "Basic " + Buffer.from(`${apiKey}:`).toString("base64") },
+      headers: { Authorization: "Basic " + Buffer.from(`${apiKey.trim()}:`).toString("base64") },
       body: form,
     });
     const text = await res.text();
@@ -227,9 +227,32 @@ export const processQueueFn = createServerFn({ method: "POST" })
       .order("scheduled_for", { ascending: true })
       .limit(50);
 
+    if (!items?.length) {
+      const { data: nextItem } = await supabaseAdmin
+        .from("message_queue")
+        .select("scheduled_for, last_error")
+        .eq("status", "pending")
+        .order("scheduled_for", { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      return {
+        sent: 0,
+        failed: 0,
+        skipped: 0,
+        rescheduled: 0,
+        totalProcessed: 0,
+        pending: nextItem ? 1 : 0,
+        nextScheduledFor: nextItem?.scheduled_for ?? null,
+        message: nextItem
+          ? "Nenhuma mensagem vencida para processar agora"
+          : "Não há mensagens pendentes na fila",
+      };
+    }
+
     let sent = 0;
     let failed = 0;
     let skipped = 0;
+    let rescheduled = 0;
 
     for (const item of items ?? []) {
       const ch = item.channel as any;
@@ -257,13 +280,24 @@ export const processQueueFn = createServerFn({ method: "POST" })
         continue;
       }
       if (ch.status === "paused") {
-        skipped++;
+        await supabaseAdmin
+          .from("message_queue")
+          .update({ status: "pending", scheduled_for: new Date(Date.now() + 15 * 60 * 1000).toISOString() })
+          .eq("id", item.id);
+        rescheduled++;
         continue;
       }
       // daily limit check
       let sentToday = ch.sent_today_date === today ? ch.sent_today : 0;
       if (sentToday >= ch.daily_limit) {
-        skipped++;
+        const nextDay = new Date();
+        nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+        nextDay.setUTCHours(12, 0, 0, 0);
+        await supabaseAdmin
+          .from("message_queue")
+          .update({ status: "pending", scheduled_for: nextDay.toISOString() })
+          .eq("id", item.id);
+        rescheduled++;
         continue;
       }
       // business hours (tz-aware)
@@ -281,17 +315,45 @@ export const processQueueFn = createServerFn({ method: "POST" })
       const wd = wdNames[map.weekday] ?? 1;
       const hhmm = `${map.hour}:${map.minute}`;
       if (!days.includes(wd) || hhmm < start || hhmm > end) {
-        skipped++;
+        await supabaseAdmin
+          .from("message_queue")
+          .update({ status: "pending", scheduled_for: new Date(Date.now() + 30 * 60 * 1000).toISOString() })
+          .eq("id", item.id);
+        rescheduled++;
         continue;
       }
 
+      const attempts = (item.attempts ?? 0) + 1;
       await supabaseAdmin
         .from("message_queue")
-        .update({ status: "processing", attempts: item.attempts + 1 })
+        .update({ status: "processing", attempts })
         .eq("id", item.id);
 
+      let apiKey: string;
+      try {
+        apiKey = await getChannelApiKey(ch.id);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Chave da Ziontalk indisponível";
+        await supabaseAdmin
+          .from("message_queue")
+          .update({ status: "failed", last_error: message })
+          .eq("id", item.id);
+        if (item.campaign_recipient_id) {
+          await supabaseAdmin
+            .from("campaign_recipients")
+            .update({ status: "failed", error: message })
+            .eq("id", item.campaign_recipient_id);
+        }
+        await supabaseAdmin
+          .from("channels")
+          .update({ status: "error", last_error: message })
+          .eq("id", ch.id);
+        failed++;
+        continue;
+      }
+
       const result = await zionSendMessage({
-        apiKey: await getChannelApiKey(ch.id),
+        apiKey,
         phone: ct.phone_e164,
         msg: item.rendered_text,
       });
@@ -350,26 +412,31 @@ export const processQueueFn = createServerFn({ method: "POST" })
         });
       } else {
         failed++;
-        const attempts = (item.attempts ?? 0) + 1;
+        const tooMany = attempts >= 3;
         const backoffMs = Math.min(60_000 * Math.pow(2, attempts), 60 * 60_000);
         await supabaseAdmin
           .from("message_queue")
           .update({
-            status: attempts >= 3 ? "failed" : "pending",
+            status: tooMany ? "failed" : "pending",
+            attempts,
             last_error: result.body.slice(0, 500),
             scheduled_for: new Date(Date.now() + backoffMs).toISOString(),
           })
           .eq("id", item.id);
-        if (item.campaign_recipient_id && item.attempts >= 2) {
+        if (item.campaign_recipient_id && tooMany) {
           await supabaseAdmin
             .from("campaign_recipients")
             .update({ status: "failed", error: result.body.slice(0, 300) })
             .eq("id", item.campaign_recipient_id);
         }
+        await supabaseAdmin
+          .from("channels")
+          .update({ status: result.status === 401 ? "error" : ch.status, last_error: result.body.slice(0, 500) })
+          .eq("id", ch.id);
       }
     }
 
-    return { sent, failed, skipped, totalProcessed: (items ?? []).length };
+    return { sent, failed, skipped, rescheduled, totalProcessed: (items ?? []).length };
   });
 
 /** Enqueue all recipients of a campaign into message_queue. */
