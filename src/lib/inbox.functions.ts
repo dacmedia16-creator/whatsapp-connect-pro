@@ -90,6 +90,22 @@ export const addInternalNoteFn = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
+export const markConversationReadFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) =>
+    z.object({ conversationId: z.string().uuid() }).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    if (!(await canEditConversation(context.userId, data.conversationId))) {
+      return { ok: false };
+    }
+    await supabaseAdmin
+      .from("conversations")
+      .update({ unread_count: 0 })
+      .eq("id", data.conversationId);
+    return { ok: true };
+  });
+
 export const audiencePreviewFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) =>
