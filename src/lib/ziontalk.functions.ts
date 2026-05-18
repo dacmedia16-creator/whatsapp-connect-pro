@@ -239,6 +239,7 @@ export const processQueueFn = createServerFn({ method: "POST" })
         sent: 0,
         failed: 0,
         skipped: 0,
+        rescheduled: 0,
         totalProcessed: 0,
         pending: nextItem ? 1 : 0,
         nextScheduledFor: nextItem?.scheduled_for ?? null,
@@ -411,26 +412,31 @@ export const processQueueFn = createServerFn({ method: "POST" })
         });
       } else {
         failed++;
-        const attempts = (item.attempts ?? 0) + 1;
+        const tooMany = attempts >= 3;
         const backoffMs = Math.min(60_000 * Math.pow(2, attempts), 60 * 60_000);
         await supabaseAdmin
           .from("message_queue")
           .update({
-            status: attempts >= 3 ? "failed" : "pending",
+            status: tooMany ? "failed" : "pending",
+            attempts,
             last_error: result.body.slice(0, 500),
             scheduled_for: new Date(Date.now() + backoffMs).toISOString(),
           })
           .eq("id", item.id);
-        if (item.campaign_recipient_id && item.attempts >= 2) {
+        if (item.campaign_recipient_id && tooMany) {
           await supabaseAdmin
             .from("campaign_recipients")
             .update({ status: "failed", error: result.body.slice(0, 300) })
             .eq("id", item.campaign_recipient_id);
         }
+        await supabaseAdmin
+          .from("channels")
+          .update({ status: result.status === 401 ? "error" : ch.status, last_error: result.body.slice(0, 500) })
+          .eq("id", ch.id);
       }
     }
 
-    return { sent, failed, skipped, totalProcessed: (items ?? []).length };
+    return { sent, failed, skipped, rescheduled, totalProcessed: (items ?? []).length };
   });
 
 /** Enqueue all recipients of a campaign into message_queue. */
