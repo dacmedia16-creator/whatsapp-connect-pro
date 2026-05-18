@@ -1,26 +1,32 @@
-## Problema
+## Por que não enviou
 
-Clicar em "Abrir" navega para `/campaigns/<id>`, mas a página de detalhes não aparece — continua mostrando a lista de campanhas.
+O worker `process-queue` tentou despachar a mensagem da campanha "Teste" mas a Ziontalk respondeu **"API Key not informed"**. A mensagem voltou para `pending` com `attempts=1` e o canal "Envio 1" ficou com `last_error="API Key not informed"`.
 
-## Causa
+## Causa raiz
 
-No TanStack Router (flat routing), o arquivo `src/routes/_authenticated/campaigns.tsx` vira **rota pai** de `campaigns.$campaignId.tsx`. O `routeTree.gen.ts` confirma isso: `$campaignId` é registrado como child de `/campaigns`.
+A chave da Ziontalk do canal está armazenada **cifrada** (coluna `channels.zion_api_key_encrypted` + tabela `channel_api_keys` com versão ativa). A coluna em texto plano `channels.zion_api_key` foi zerada quando o canal foi criado/rotacionado (comportamento correto da migração).
 
-Como rota pai, `campaigns.tsx` precisaria renderizar `<Outlet />` para que o filho apareça. Hoje ela renderiza apenas `<CampaignsPage />` (a lista), sem `<Outlet />`. Resultado: a URL muda, o route filho "casa", mas nada do filho é renderizado.
+Mas o worker `src/routes/api/public/hooks/process-queue.ts` lê **diretamente** `ch.zion_api_key` (string vazia) e manda para `zionSendMessage`:
+
+```ts
+apiKey: ch.zion_api_key, // sempre "" desde a migração de cifragem
+```
+
+Como o campo está vazio, a Ziontalk rejeita com 401/erro e nenhuma campanha consegue enviar.
+
+Já existe no banco a função `public.get_channel_api_key(p_channel_id, p_secret)` (SECURITY DEFINER, grant para `service_role`) que devolve a chave decifrada usando `CHANNEL_KEY_SECRET`. O secret `CHANNEL_KEY_SECRET` já está configurado no ambiente do servidor.
 
 ## Correção
 
-Transformar `campaigns.tsx` em rota índice, renomeando para `campaigns.index.tsx`. Assim:
+Em `src/routes/api/public/hooks/process-queue.ts`, antes do `zionSendMessage`:
 
-- `/campaigns` → `campaigns.index.tsx` (lista)
-- `/campaigns/$campaignId` → `campaigns.$campaignId.tsx` (detalhe)
+1. Ler `process.env.CHANNEL_KEY_SECRET`. Se faltar, marcar a mensagem como `failed` com erro claro ("CHANNEL_KEY_SECRET ausente no servidor") em vez de gastar tentativas chamando a Ziontalk.
+2. Chamar `supabaseAdmin.rpc("get_channel_api_key", { p_channel_id: ch.id, p_secret: secret })`.
+3. Se o retorno for nulo/vazio, marcar mensagem como `failed`, atualizar `channels.last_error = "Chave da Ziontalk não configurada"` e seguir.
+4. Passar a chave decifrada para `zionSendMessage({ apiKey, ... })`.
 
-Ambos viram rotas-irmãs sob `/campaigns`, sem precisar de layout pai nem `<Outlet />`. O Vite plugin regenera `routeTree.gen.ts` automaticamente.
+Cache opcional por execução: usar um `Map<channelId, string>` dentro do handler para não chamar a RPC uma vez por item quando vários da mesma fila são do mesmo canal.
 
-### Passos
+Após o deploy, re-tentar (o item `5a01c5a9…` está agendado para 02:45 e será reprocessado automaticamente; alternativamente, o usuário pode clicar "Processar fila agora" na tela da campanha).
 
-1. Renomear `src/routes/_authenticated/campaigns.tsx` → `src/routes/_authenticated/campaigns.index.tsx`.
-2. Atualizar dentro do arquivo: `createFileRoute("/_authenticated/campaigns")` → `createFileRoute("/_authenticated/campaigns/")` (trailing slash indica index route no TanStack).
-3. Nenhuma mudança em links (`<Link to="/campaigns/$campaignId">` continua válido) nem em `campaigns.$campaignId.tsx`.
-
-Sem mudanças em backend, dados ou outras telas.
+Sem mudanças em UI, schema ou outras rotas.
