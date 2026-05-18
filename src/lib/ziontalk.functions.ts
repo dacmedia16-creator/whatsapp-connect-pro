@@ -266,15 +266,21 @@ export const processQueueFn = createServerFn({ method: "POST" })
         skipped++;
         continue;
       }
-      // business hours
+      // business hours (tz-aware)
       const bh = ch.business_hours || {};
-      const now = new Date();
-      const dayOk = !bh.days || (bh.days as number[]).includes(now.getUTCDay());
-      const hh = now.getUTCHours();
-      const startH = bh.start ? parseInt(String(bh.start).split(":")[0], 10) : 0;
-      const endH = bh.end ? parseInt(String(bh.end).split(":")[0], 10) : 23;
-      const hourOk = hh >= startH && hh <= endH;
-      if (!dayOk || !hourOk) {
+      const tz: string = bh.tz ?? "UTC";
+      const days: number[] = Array.isArray(bh.days) ? bh.days : [0, 1, 2, 3, 4, 5, 6];
+      const start: string = bh.start ?? "00:00";
+      const end: string = bh.end ?? "23:59";
+      const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone: tz, hour12: false, weekday: "short", hour: "2-digit", minute: "2-digit",
+      }).formatToParts(new Date());
+      const map: Record<string, string> = {};
+      parts.forEach((p) => { map[p.type] = p.value; });
+      const wdNames: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+      const wd = wdNames[map.weekday] ?? 1;
+      const hhmm = `${map.hour}:${map.minute}`;
+      if (!days.includes(wd) || hhmm < start || hhmm > end) {
         skipped++;
         continue;
       }
@@ -344,12 +350,14 @@ export const processQueueFn = createServerFn({ method: "POST" })
         });
       } else {
         failed++;
+        const attempts = (item.attempts ?? 0) + 1;
+        const backoffMs = Math.min(60_000 * Math.pow(2, attempts), 60 * 60_000);
         await supabaseAdmin
           .from("message_queue")
           .update({
-            status: item.attempts >= 2 ? "failed" : "pending",
+            status: attempts >= 3 ? "failed" : "pending",
             last_error: result.body.slice(0, 500),
-            scheduled_for: new Date(Date.now() + 60_000).toISOString(),
+            scheduled_for: new Date(Date.now() + backoffMs).toISOString(),
           })
           .eq("id", item.id);
         if (item.campaign_recipient_id && item.attempts >= 2) {

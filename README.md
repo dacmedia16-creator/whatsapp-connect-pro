@@ -55,6 +55,15 @@ Triggers automáticas:
 
 O botão **Processar lote** na campanha permanece como ação administrativa de teste.
 
+## Boas práticas de uso autorizado (LGPD)
+- Envie apenas para contatos com **consent=true** e sem `opt_out_at`. A plataforma já bloqueia o resto.
+- Mantenha base de prova de consentimento (origem, data, canal).
+- Inclua identificação do remetente e instrução de descadastro em **toda** campanha — o wizard adiciona o rodapé "Responda SAIR…" automaticamente quando ausente.
+- Respeite horários comerciais por canal e fuso (`business_hours.tz`).
+- Atenda solicitações de opt-out em até 24h — o webhook + trigger `fn_auto_opt_out_on_inbound` faz isso automaticamente para palavras-chave configuradas.
+- Nunca compartilhe a API key da ZionTalk; ela é criptografada (`pgp_sym_encrypt`) e versionada em `channel_api_keys`. Em caso de suspeita, **Revogar** + **Rotacionar** na tela de Canais.
+- Monitore o painel **Relatórios** diariamente: taxa de falhas alta ou erros 401 indicam canal bloqueado.
+
 ## Checklist de produção
 - [ ] `ZION_WEBHOOK_TOKEN` configurado em secrets.
 - [ ] Pelo menos 1 canal cadastrado e testado (botão Testar em Canais).

@@ -16,7 +16,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { Search, Send, StickyNote, MessageSquareText, Ban, Inbox as InboxIcon, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { sendMessageFn } from "@/lib/ziontalk.functions";
-import { assignConversationFn, updateConversationStatusFn, addInternalNoteFn } from "@/lib/inbox.functions";
+import { assignConversationFn, updateConversationStatusFn, addInternalNoteFn, markConversationReadFn } from "@/lib/inbox.functions";
 import { formatPhone } from "@/lib/phone";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -40,6 +40,16 @@ function InboxPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [channelFilter, setChannelFilter] = useState<string>("all");
+  const markRead = useServerFn(markConversationReadFn);
+
+  const { data: channelOptions = [] } = useQuery({
+    queryKey: ["inbox-channel-options"],
+    queryFn: async () => {
+      const { data } = await supabase.from("channels").select("id, label").order("label");
+      return data ?? [];
+    },
+  });
 
   // Realtime: invalidate on any change to conversations or messages
   useEffect(() => {
@@ -60,7 +70,7 @@ function InboxPage() {
   }, [qc]);
 
   const { data: conversations = [], isLoading } = useQuery({
-    queryKey: ["inbox-conversations", statusFilter],
+    queryKey: ["inbox-conversations", statusFilter, channelFilter],
     queryFn: async () => {
       let q = supabase
         .from("conversations")
@@ -68,6 +78,7 @@ function InboxPage() {
         .order("last_message_at", { ascending: false })
         .limit(200);
       if (statusFilter !== "all") q = q.eq("status", statusFilter as any);
+      if (channelFilter !== "all") q = q.eq("channel_id", channelFilter);
       const { data, error } = await q;
       if (error) throw error;
       return data ?? [];
@@ -85,6 +96,14 @@ function InboxPage() {
   }, [conversations, search]);
 
   const selected = filtered.find((c: any) => c.id === selectedId) ?? null;
+
+  // Mark as read when conversation is opened (and has unread messages)
+  useEffect(() => {
+    if (!selected || !selected.unread_count) return;
+    markRead({ data: { conversationId: selected.id } })
+      .then(() => qc.invalidateQueries({ queryKey: ["inbox-conversations"] }))
+      .catch(() => {});
+  }, [selected?.id, selected?.unread_count, markRead, qc]);
 
   return (
     <div className="h-[calc(100vh-3.5rem)] flex flex-col">
@@ -110,6 +129,15 @@ function InboxPage() {
                 <SelectItem value="em_atendimento">Em atendimento</SelectItem>
                 <SelectItem value="aguardando_cliente">Aguardando cliente</SelectItem>
                 <SelectItem value="resolvido">Resolvido</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={channelFilter} onValueChange={setChannelFilter}>
+              <SelectTrigger className="h-8"><SelectValue placeholder="Canal" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos os canais</SelectItem>
+                {channelOptions.map((c: any) => (
+                  <SelectItem key={c.id} value={c.id}>{c.label}</SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
