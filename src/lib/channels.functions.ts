@@ -80,7 +80,7 @@ export const revokeChannelKeyFn = createServerFn({ method: "POST" })
     const { error } = await supabaseAdmin.rpc("revoke_channel_api_key", {
       p_key_id: data.keyId,
       p_user: context.userId,
-      p_reason: data.reason ?? null,
+      p_reason: data.reason,
     });
     if (error) throw new Error(error.message);
     return { ok: true };
