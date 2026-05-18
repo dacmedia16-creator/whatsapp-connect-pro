@@ -150,6 +150,23 @@ function CampaignsReport() {
     },
   });
   return (
+    <div className="space-y-4">
+    <Card><CardContent className="p-4">
+      <p className="text-sm font-medium mb-2">Envios vs falhas por campanha</p>
+      <div className="h-64">
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={(data ?? []).slice(0, 10).map((c: any) => ({ name: c.name.slice(0, 18), sent: c.sent, failed: c.failed }))}>
+            <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+            <XAxis dataKey="name" className="text-xs" />
+            <YAxis className="text-xs" allowDecimals={false} />
+            <Tooltip />
+            <Legend />
+            <Bar dataKey="sent" fill="hsl(142 70% 45%)" name="Enviadas" />
+            <Bar dataKey="failed" fill="hsl(var(--destructive))" name="Falhas" />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    </CardContent></Card>
     <Card><CardContent className="p-0">
       <Table>
         <TableHeader><TableRow>
@@ -176,6 +193,7 @@ function CampaignsReport() {
         </TableBody>
       </Table>
     </CardContent></Card>
+    </div>
   );
 }
 
