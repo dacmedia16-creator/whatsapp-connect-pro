@@ -2,6 +2,18 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+
+async function getChannelApiKey(channelId: string): Promise<string> {
+  const secret = process.env.CHANNEL_KEY_SECRET;
+  if (!secret) throw new Error("CHANNEL_KEY_SECRET não configurado");
+  const { data, error } = await supabaseAdmin.rpc("get_channel_api_key", {
+    p_channel_id: channelId,
+    p_secret: secret,
+  });
+  if (error) throw new Error(error.message);
+  if (!data) throw new Error("Chave de API do canal indisponível");
+  return data as string;
+}
 import { zionSendMessage, logSend } from "./ziontalk.server";
 
 /** Send a message via a specific channel. Used by admin actions and inbox replies. */
