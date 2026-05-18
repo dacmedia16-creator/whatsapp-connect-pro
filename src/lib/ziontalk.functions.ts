@@ -552,17 +552,28 @@ export const enqueueCampaignFn = createServerFn({ method: "POST" })
       };
     });
 
-    if (queueRows.length) {
-      await supabaseAdmin.from("message_queue").insert(queueRows);
+    const recipientIds = (recs ?? []).map((r) => r.id);
+    const { data: existingQueue } = recipientIds.length
+      ? await supabaseAdmin
+        .from("message_queue")
+        .select("campaign_recipient_id")
+        .in("campaign_recipient_id", recipientIds)
+        .in("status", ["pending", "processing", "sent"])
+      : { data: [] };
+    const alreadyQueued = new Set((existingQueue ?? []).map((r) => r.campaign_recipient_id));
+    const newQueueRows = queueRows.filter((row) => !alreadyQueued.has(row.campaign_recipient_id));
+
+    if (newQueueRows.length) {
+      await supabaseAdmin.from("message_queue").insert(newQueueRows);
     }
 
     await supabaseAdmin
       .from("campaigns")
       .update({
         status: campaign.scheduled_at && new Date(campaign.scheduled_at).getTime() > Date.now() ? "scheduled" : "running",
-        total_recipients: queueRows.length,
+        total_recipients: recipientIds.length,
       })
       .eq("id", campaign.id);
 
-    return { enqueued: queueRows.length };
+    return { enqueued: newQueueRows.length };
   });
