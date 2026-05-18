@@ -15,6 +15,7 @@ import {
   SEND_SETTINGS_DEFAULTS,
   validateSendSettings,
   type SendSettingsState,
+  type RotationMode,
 } from "@/components/campaign/send-settings-form";
 
 export const Route = createFileRoute("/_authenticated/campaigns/$campaignId/settings")({
