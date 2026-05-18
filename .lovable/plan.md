@@ -1,12 +1,19 @@
-Vou corrigir o webhook da ZionTalk assim:
+## O que descobri
 
-1. Gerar um token novo e seguro para o webhook.
-2. Atualizar o secret `ZION_WEBHOOK_TOKEN` no backend com esse novo valor.
-3. Montar a URL final no formato:
+A chamada publicada com o token novo ainda retorna `401 Unauthorized` quando testada diretamente no backend. Isso confirma que o problema não é a ZionTalk: o endpoint publicado ainda está comparando contra outro valor em `ZION_WEBHOOK_TOKEN` ou não recarregou o secret corretamente.
 
-```txt
-https://enviomassapro.lovable.app/api/public/webhooks/ziontalk?token=NOVO_TOKEN
+## Plano de correção
+
+1. Atualizar novamente o secret `ZION_WEBHOOK_TOKEN` com o token correto.
+2. Testar diretamente o endpoint publicado com a URL final:
+
+```text
+https://enviomassapro.lovable.app/api/public/webhooks/ziontalk?token=2bdff5f6caefb5c8f48e80833f3117c408a0d337c00985c1c776f54dc39a6190
 ```
 
-4. Te entregar a URL pronta para colar no campo de webhook/POST da ZionTalk.
-5. Depois que você testar, conferir os logs para confirmar se saiu de `401 Unauthorized` para `200 OK` ou, se aparecer outro erro, diagnosticar o payload enviado pela ZionTalk.
+3. Considerar o token aceito quando o endpoint deixar de retornar `401` e passar a retornar `400` para payload vazio, ou `200` para payload válido.
+4. Se continuar `401`, adicionar um diagnóstico temporário seguro no webhook para registrar apenas metadados do token, sem expor o valor completo, e remover esse diagnóstico depois.
+
+## Resultado esperado
+
+Depois da atualização/reload do secret, a ZionTalk deve parar de receber `401` e o webhook deve começar a processar as mensagens recebidas.
