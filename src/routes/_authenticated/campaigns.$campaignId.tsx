@@ -157,9 +157,17 @@ function CampaignDetail() {
   const sendBatch = useMutation({
     mutationFn: async () => processBatch({}),
     onSuccess: (r) => {
-      toast.success(`Lote processado: ${r.sent} enviadas, ${r.failed} falharam, ${r.skipped} adiadas`);
+      if (r.totalProcessed === 0 && r.message) {
+        toast.info(r.nextScheduledFor
+          ? `${r.message}. Próximo envio: ${format(new Date(r.nextScheduledFor), "HH:mm", { locale: ptBR })}`
+          : r.message);
+      } else {
+        toast.success(`Lote processado: ${r.sent} enviadas, ${r.failed} falharam, ${r.rescheduled ?? r.skipped} adiadas`);
+      }
+      qc.invalidateQueries({ queryKey: ["campaign", campaignId] });
       qc.invalidateQueries({ queryKey: ["campaign-stats", campaignId] });
       qc.invalidateQueries({ queryKey: ["campaign-recipients", campaignId] });
+      qc.invalidateQueries({ queryKey: ["campaign-events", campaignId] });
     },
     onError: (e: Error) => toast.error(e.message),
   });
