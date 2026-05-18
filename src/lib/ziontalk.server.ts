@@ -3,7 +3,7 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 export const ZION_BASE = "https://app.ziontalk.com";
 
 function basicAuth(apiKey: string) {
-  return "Basic " + Buffer.from(`${apiKey}:`).toString("base64");
+  return "Basic " + Buffer.from(`${apiKey.trim()}:`).toString("base64");
 }
 
 export async function zionSendMessage(opts: {
