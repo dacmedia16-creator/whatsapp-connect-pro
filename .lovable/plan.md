@@ -1,27 +1,48 @@
-## Testar webhook ZionTalk → Inbox
+# Aceitar payload aninhado da ZionTalk
 
-Vou simular uma mensagem recebida chamando o endpoint do webhook diretamente (como o ZionTalk faria), usando um contato já cadastrado no banco, e depois confirmar que a mensagem apareceu no Inbox.
+## Problema
 
-### Contato que vou usar
+O webhook atual (`/api/public/webhooks/ziontalk`) só aceita campos no formato plano (`from`, `body`, `to`, `channel`). A ZionTalk envia no formato aninhado:
 
-- **Denis** — `+5515981788214` (já existe, conversa ativa `5ef0fec0-...`, canal `Envio 1`).
+```json
+{
+  "evento": "mensagem_recebida",
+  "contato": { "nome": "...", "telefone": "(46) 99999-9999" },
+  "mensagem": { "texto": "Olá", "canal": "(46) 3032-1500" },
+  "timestamp": "..."
+}
+```
 
-### Passos
+Resultado: HTTP 400 "Payload inválido".
 
-1. Localizar a rota do webhook (`src/routes/api/public/webhooks/ziontalk.*`) e confirmar o formato de payload aceito (campos esperados: telefone, texto, channel/instance, etc.).
-2. Disparar um `POST` para:
-   ```
-   https://enviomassapro.lovable.app/api/public/webhooks/ziontalk?token=<ZION_WEBHOOK_TOKEN>
-   ```
-   com payload simulando mensagem inbound do Denis (ex.: `"Olá, mensagem de teste"`).
-3. Verificar resposta HTTP (esperado 200). Se 401 → token errado. Se 4xx/5xx → checar logs do server function.
-4. Consultar o banco (`messages` da conversa do Denis) para confirmar que a nova mensagem inbound foi inserida.
-5. Conferir no preview `/inbox` que a mensagem aparece em tempo real.
+## Solução
 
-### Observações
+Atualizar `src/routes/api/public/webhooks/ziontalk.ts` para aceitar **ambos** os formatos (plano + aninhado), achatando o aninhado antes da validação.
 
-- Nenhuma mudança de código. É só execução de teste.
-- Se o payload simulado não bater com o esperado pela rota, ajusto o JSON do teste (não o código) até refletir o que o ZionTalk envia.
-- Caso o webhook devolva erro, te mostro o log e proponho a correção em uma nova rodada.
+### Mudanças
 
-Aprovo para executar?
+1. **Pré-processar o JSON** antes do `PayloadSchema.safeParse`:
+   - Se vier `contato.telefone` → mapeia para `from`
+   - Se vier `contato.nome` → mapeia para `name`
+   - Se vier `mensagem.texto` → mapeia para `body`
+   - Se vier `mensagem.canal` → mapeia para `to` (já passa pelo `normalize()` existente)
+   - `evento` e `timestamp` são ignorados
+
+2. **Manter** toda a lógica existente (token, normalização de telefone, criação de contato/conversa, inserção da mensagem, trigger de opt-out).
+
+3. **Sem mudanças** em schema do banco, secrets ou outras rotas.
+
+## Teste pós-deploy
+
+1. POST para `https://enviomassapro.lovable.app/api/public/webhooks/ziontalk?token=<TOKEN>` com payload aninhado real da ZionTalk → esperado HTTP 200.
+2. Verificar nova linha em `messages` (direction=`in`) na conversa do Denis.
+3. Confirmar aparição em `/inbox`.
+
+## Detalhes técnicos
+
+```text
+src/routes/api/public/webhooks/ziontalk.ts
+└── função flattenZionPayload(raw) chamada antes de PayloadSchema.safeParse
+```
+
+Sem novos pacotes, sem migrations.
