@@ -274,6 +274,9 @@ function CampaignWizard({ onDone }: { onDone: () => void }) {
                 <p className="text-xs text-muted-foreground">
                   Variáveis: <code>{`{{nome}}`}</code> e quaisquer chaves de <em>custom_fields</em>.
                 </p>
+                <p className="text-xs text-muted-foreground">
+                  Um rodapé de descadastro (<em>“Responda SAIR…”</em>) é adicionado automaticamente quando não houver palavra de opt-out no texto.
+                </p>
               </div>
             </div>
           )}
