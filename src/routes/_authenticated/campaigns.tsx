@@ -16,7 +16,18 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { useAuth } from "@/hooks/use-auth";
-import { Plus, Megaphone, List, Tag, Users, FileSpreadsheet, UserPlus, X, ArrowLeft } from "lucide-react";
+import { Plus, Megaphone, List, Tag, Users, FileSpreadsheet, UserPlus, X, ArrowLeft, Trash2 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -69,6 +80,24 @@ function CampaignsPage() {
       if (error) throw error;
       return (data ?? []) as Campaign[];
     },
+  });
+
+  const deleteCampaign = useMutation({
+    mutationFn: async (id: string) => {
+      await supabase.from("message_queue").delete().in(
+        "campaign_recipient_id",
+        (await supabase.from("campaign_recipients").select("id").eq("campaign_id", id)).data?.map((r) => r.id) ?? [],
+      );
+      await supabase.from("campaign_recipients").delete().eq("campaign_id", id);
+      await supabase.from("campaign_events").delete().eq("campaign_id", id);
+      const { error } = await supabase.from("campaigns").delete().eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("Campanha excluída");
+      qc.invalidateQueries({ queryKey: ["campaigns"] });
+    },
+    onError: (e: Error) => toast.error(e.message),
   });
 
   return (
@@ -125,9 +154,37 @@ function CampaignsPage() {
                     {format(new Date(c.created_at), "dd/MM/yyyy", { locale: ptBR })}
                   </TableCell>
                   <TableCell className="text-right">
-                    <Link to="/campaigns/$campaignId" params={{ campaignId: c.id }} className="text-sm text-primary hover:underline">
-                      Abrir
-                    </Link>
+                    <div className="flex items-center justify-end gap-3">
+                      <Link to="/campaigns/$campaignId" params={{ campaignId: c.id }} className="text-sm text-primary hover:underline">
+                        Abrir
+                      </Link>
+                      {canManage && (
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive">
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>Excluir campanha?</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                Esta ação remove a campanha "{c.name}", seus destinatários, eventos e mensagens enfileiradas. Não é possível desfazer.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                              <AlertDialogAction
+                                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                onClick={() => deleteCampaign.mutate(c.id)}
+                              >
+                                Excluir
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      )}
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}
