@@ -336,24 +336,15 @@ export const processQueueFn = createServerFn({ method: "POST" })
         rescheduled++;
         continue;
       }
-      // business hours (tz-aware)
-      const bh = ch.business_hours || {};
-      const tz: string = bh.tz ?? "UTC";
-      const days: number[] = Array.isArray(bh.days) ? bh.days : [0, 1, 2, 3, 4, 5, 6];
-      const start: string = bh.start ?? "00:00";
-      const end: string = bh.end ?? "23:59";
-      const parts = new Intl.DateTimeFormat("en-US", {
-        timeZone: tz, hour12: false, weekday: "short", hour: "2-digit", minute: "2-digit",
-      }).formatToParts(new Date());
-      const map: Record<string, string> = {};
-      parts.forEach((p) => { map[p.type] = p.value; });
-      const wdNames: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
-      const wd = wdNames[map.weekday] ?? 1;
-      const hhmm = `${map.hour}:${map.minute}`;
-      if (!days.includes(wd) || hhmm < start || hhmm > end) {
+      const bh = getBusinessHoursWindow(ch.business_hours);
+      if (!bh.ok) {
         await supabaseAdmin
           .from("message_queue")
-          .update({ status: "pending", scheduled_for: new Date(Date.now() + 30 * 60 * 1000).toISOString() })
+          .update({
+            status: "pending",
+            scheduled_for: (bh.nextWindow ?? new Date(Date.now() + 60 * 60 * 1000)).toISOString(),
+            last_error: "Envio adiado por horário comercial",
+          })
           .eq("id", item.id);
         rescheduled++;
         continue;
