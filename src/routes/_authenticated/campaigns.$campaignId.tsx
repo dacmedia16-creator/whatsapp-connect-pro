@@ -12,7 +12,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { useAuth } from "@/hooks/use-auth";
-import { ArrowLeft, Play, Pause, Send, Square, RefreshCw, Radio, Inbox, CheckCircle2, XCircle, Ban, Truck, ChevronLeft, ChevronRight } from "lucide-react";
+import { ArrowLeft, Play, Pause, Send, Square, RefreshCw, Radio, Inbox, CheckCircle2, XCircle, Ban, Truck, ChevronLeft, ChevronRight, Settings } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
