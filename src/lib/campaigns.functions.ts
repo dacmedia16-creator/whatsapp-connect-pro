@@ -52,7 +52,7 @@ const rawRowSchema = z.object({
 });
 
 const previewInput = z.discriminatedUnion("method", [
-  z.object({ method: z.literal("list"), listId: z.string().uuid() }),
+  z.object({ method: z.literal("list"), listIds: z.array(z.string().uuid()).min(1).max(50) }),
   z.object({
     method: z.literal("tags"),
     tags: z.array(z.string().min(1).max(60)).min(1).max(20),
@@ -72,9 +72,14 @@ export const previewRecipientsFn = createServerFn({ method: "POST" })
       const { data: items } = await supabaseAdmin
         .from("contact_list_items")
         .select("contact:contacts(id, name, phone_e164, tags, consent, opt_out_at)")
-        .eq("list_id", data.listId);
-      const contacts = (items ?? []).map((it: any) => it.contact).filter(Boolean);
-      return classifyExistingContacts(contacts, "list");
+        .in("list_id", data.listIds);
+      // Dedupe across multiple lists by contact id
+      const byId = new Map<string, any>();
+      (items ?? []).forEach((it: any) => {
+        const c = it.contact;
+        if (c && !byId.has(c.id)) byId.set(c.id, c);
+      });
+      return classifyExistingContacts(Array.from(byId.values()), "list");
     }
 
     if (data.method === "tags") {
@@ -133,7 +138,7 @@ const createInput = z.object({
   autoPauseOnErrors: z.boolean().optional(),
   method: z.enum(["list", "tags", "import", "manual"]),
   methodSummary: z.object({
-    listId: z.string().uuid().optional(),
+    listIds: z.array(z.string().uuid()).optional(),
     tags: z.array(z.string()).optional(),
     match: z.enum(["any", "all"]).optional(),
   }).optional(),

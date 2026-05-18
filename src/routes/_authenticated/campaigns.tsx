@@ -154,7 +154,7 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
   const [method, setMethod] = useState<Method | null>(null);
 
   // method state
-  const [listId, setListId] = useState<string>("");
+  const [listIds, setListIds] = useState<string[]>([]);
   const [tagSelection, setTagSelection] = useState<string[]>([]);
   const [tagMatch, setTagMatch] = useState<"any" | "all">("any");
   const [manualRows, setManualRows] = useState<Array<{ name: string; phone: string; consent: boolean; tags: string[] }>>([]);
@@ -175,7 +175,7 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
 
   const reset = () => {
     setStep(1); setName(""); setScheduledAt(""); setChannelId(""); setMethod(null);
-    setListId(""); setTagSelection([]); setTagMatch("any");
+    setListIds([]); setTagSelection([]); setTagMatch("any");
     setManualRows([]); setImportedRows([]);
     setResolved([]); setSummary(emptySummary());
     setMessage("Olá {{nome}}, "); setRatePerMin(20); setAutoPause(true); setInitiate(true);
@@ -213,8 +213,8 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
   async function runPreview() {
     try {
       let res: { contacts: ResolvedContact[]; summary: ResolveSummary } | null = null;
-      if (method === "list" && listId) {
-        res = await previewFn({ data: { method: "list", listId } });
+      if (method === "list" && listIds.length) {
+        res = await previewFn({ data: { method: "list", listIds } });
       } else if (method === "tags" && tagSelection.length) {
         res = await previewFn({ data: { method: "tags", tags: tagSelection, match: tagMatch } });
       } else if (method === "manual" && manualRows.length) {
@@ -305,7 +305,7 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
         consent: true,
       }));
       const methodSummary: any = {};
-      if (method === "list") methodSummary.listId = listId;
+      if (method === "list") methodSummary.listIds = listIds;
       if (method === "tags") { methodSummary.tags = tagSelection; methodSummary.match = tagMatch; }
       return createFn({
         data: {
@@ -405,20 +405,69 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
                   {method && (
                     <div className="rounded-lg border bg-muted/10 p-4 space-y-3">
                       {method === "list" && (
-                        <div className="flex gap-2 items-end">
-                          <div className="flex-1 space-y-1.5">
-                            <Label>Selecione a lista de contatos</Label>
-                            <Select value={listId} onValueChange={setListId}>
-                              <SelectTrigger><SelectValue placeholder="Escolha uma lista" /></SelectTrigger>
-                              <SelectContent>
-                                {lists.length === 0 && <div className="px-3 py-2 text-sm text-muted-foreground">Nenhuma lista cadastrada</div>}
-                                {lists.map((l: any) => (
-                                  <SelectItem key={l.id} value={l.id}>{l.name} <span className="text-muted-foreground text-xs">· {l.count}</span></SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between">
+                            <Label>Selecione uma ou mais listas</Label>
+                            <div className="flex items-center gap-2 text-xs">
+                              <button
+                                type="button"
+                                className="text-primary hover:underline"
+                                onClick={() => setListIds(lists.map((l: any) => l.id))}
+                                disabled={lists.length === 0}
+                              >
+                                Selecionar todas
+                              </button>
+                              <span className="text-muted-foreground">·</span>
+                              <button
+                                type="button"
+                                className="text-muted-foreground hover:underline"
+                                onClick={() => setListIds([])}
+                                disabled={listIds.length === 0}
+                              >
+                                Limpar
+                              </button>
+                            </div>
                           </div>
-                          <Button onClick={runPreview} disabled={!listId}>Carregar</Button>
+                          <div className="max-h-56 overflow-y-auto border rounded-md divide-y">
+                            {lists.length === 0 && (
+                              <div className="px-3 py-4 text-sm text-muted-foreground">Nenhuma lista cadastrada. Crie listas em Contatos → Listas.</div>
+                            )}
+                            {lists.map((l: any) => {
+                              const checked = listIds.includes(l.id);
+                              return (
+                                <label
+                                  key={l.id}
+                                  className="flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-muted/40"
+                                >
+                                  <Checkbox
+                                    checked={checked}
+                                    onCheckedChange={(v) => {
+                                      setListIds((prev) =>
+                                        v ? Array.from(new Set([...prev, l.id])) : prev.filter((x) => x !== l.id),
+                                      );
+                                    }}
+                                  />
+                                  <div className="flex-1 min-w-0">
+                                    <div className="text-sm font-medium truncate">{l.name}</div>
+                                    {l.description && (
+                                      <div className="text-xs text-muted-foreground truncate">{l.description}</div>
+                                    )}
+                                  </div>
+                                  <Badge variant="secondary" className="text-xs">{l.count} contato(s)</Badge>
+                                </label>
+                              );
+                            })}
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <p className="text-xs text-muted-foreground">
+                              {listIds.length === 0
+                                ? "Selecione ao menos uma lista"
+                                : `${listIds.length} lista(s) · ${lists.filter((l: any) => listIds.includes(l.id)).reduce((a: number, l: any) => a + (l.count ?? 0), 0)} contato(s) na soma bruta (antes de dedupe e validação)`}
+                            </p>
+                            <Button onClick={runPreview} disabled={listIds.length === 0}>
+                              Calcular destinatários
+                            </Button>
+                          </div>
                         </div>
                       )}
 
