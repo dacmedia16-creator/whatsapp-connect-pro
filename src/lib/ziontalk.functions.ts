@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { zionSendMessage, logSend } from "./ziontalk.server";
 
 async function getChannelApiKey(channelId: string): Promise<string> {
   const secret = process.env.CHANNEL_KEY_SECRET;
@@ -14,7 +15,42 @@ async function getChannelApiKey(channelId: string): Promise<string> {
   if (!data) throw new Error("Chave de API do canal indisponível");
   return data as string;
 }
-import { zionSendMessage, logSend } from "./ziontalk.server";
+
+function nextDateInTz(base: Date, addDays: number, hour: number, minute: number): Date {
+  const d = new Date(base);
+  d.setUTCDate(d.getUTCDate() + addDays);
+  d.setUTCHours(hour + 3, minute, 0, 0);
+  return d;
+}
+
+function getBusinessHoursWindow(bh: any): { ok: boolean; nextWindow: Date | null } {
+  if (!bh || typeof bh !== "object") return { ok: true, nextWindow: null };
+  const tz: string = bh.tz ?? "UTC";
+  const days: number[] = Array.isArray(bh.days) ? bh.days : [0, 1, 2, 3, 4, 5, 6];
+  const start: string = bh.start ?? "00:00";
+  const end: string = bh.end ?? "23:59";
+  const now = new Date();
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz, hour12: false, weekday: "short", hour: "2-digit", minute: "2-digit",
+  }).formatToParts(now);
+  const map: Record<string, string> = {};
+  parts.forEach((p) => { map[p.type] = p.value; });
+  const wdNames: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  const wd = wdNames[map.weekday] ?? 1;
+  const hhmm = `${map.hour}:${map.minute}`;
+  if (days.includes(wd) && hhmm >= start && hhmm <= end) return { ok: true, nextWindow: null };
+
+  for (let i = 0; i < 8; i++) {
+    const cand = new Date(now.getTime() + i * 24 * 60 * 60 * 1000);
+    const dayParts = new Intl.DateTimeFormat("en-US", { timeZone: tz, hour12: false, weekday: "short" }).formatToParts(cand);
+    const day = wdNames[dayParts.find((x) => x.type === "weekday")?.value ?? "Mon"] ?? 1;
+    if (!days.includes(day)) continue;
+    const [h, m] = start.split(":").map(Number);
+    if (i === 0 && hhmm < start) return { ok: false, nextWindow: nextDateInTz(now, 0, h, m) };
+    if (i > 0) return { ok: false, nextWindow: nextDateInTz(now, i, h, m) };
+  }
+  return { ok: false, nextWindow: new Date(Date.now() + 60 * 60 * 1000) };
+}
 
 /** Send a message via a specific channel. Used by admin actions and inbox replies. */
 export const sendMessageFn = createServerFn({ method: "POST" })
@@ -300,24 +336,15 @@ export const processQueueFn = createServerFn({ method: "POST" })
         rescheduled++;
         continue;
       }
-      // business hours (tz-aware)
-      const bh = ch.business_hours || {};
-      const tz: string = bh.tz ?? "UTC";
-      const days: number[] = Array.isArray(bh.days) ? bh.days : [0, 1, 2, 3, 4, 5, 6];
-      const start: string = bh.start ?? "00:00";
-      const end: string = bh.end ?? "23:59";
-      const parts = new Intl.DateTimeFormat("en-US", {
-        timeZone: tz, hour12: false, weekday: "short", hour: "2-digit", minute: "2-digit",
-      }).formatToParts(new Date());
-      const map: Record<string, string> = {};
-      parts.forEach((p) => { map[p.type] = p.value; });
-      const wdNames: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
-      const wd = wdNames[map.weekday] ?? 1;
-      const hhmm = `${map.hour}:${map.minute}`;
-      if (!days.includes(wd) || hhmm < start || hhmm > end) {
+      const bh = getBusinessHoursWindow(ch.business_hours);
+      if (!bh.ok) {
         await supabaseAdmin
           .from("message_queue")
-          .update({ status: "pending", scheduled_for: new Date(Date.now() + 30 * 60 * 1000).toISOString() })
+          .update({
+            status: "pending",
+            scheduled_for: (bh.nextWindow ?? new Date(Date.now() + 60 * 60 * 1000)).toISOString(),
+            last_error: "Envio adiado por horário comercial",
+          })
           .eq("id", item.id);
         rescheduled++;
         continue;
@@ -525,17 +552,28 @@ export const enqueueCampaignFn = createServerFn({ method: "POST" })
       };
     });
 
-    if (queueRows.length) {
-      await supabaseAdmin.from("message_queue").insert(queueRows);
+    const recipientIds = (recs ?? []).map((r) => r.id);
+    const { data: existingQueue } = recipientIds.length
+      ? await supabaseAdmin
+        .from("message_queue")
+        .select("campaign_recipient_id")
+        .in("campaign_recipient_id", recipientIds)
+        .in("status", ["pending", "processing", "sent"])
+      : { data: [] };
+    const alreadyQueued = new Set((existingQueue ?? []).map((r) => r.campaign_recipient_id));
+    const newQueueRows = queueRows.filter((row) => !alreadyQueued.has(row.campaign_recipient_id));
+
+    if (newQueueRows.length) {
+      await supabaseAdmin.from("message_queue").insert(newQueueRows);
     }
 
     await supabaseAdmin
       .from("campaigns")
       .update({
         status: campaign.scheduled_at && new Date(campaign.scheduled_at).getTime() > Date.now() ? "scheduled" : "running",
-        total_recipients: queueRows.length,
+        total_recipients: recipientIds.length,
       })
       .eq("id", campaign.id);
 
-    return { enqueued: queueRows.length };
+    return { enqueued: newQueueRows.length };
   });
