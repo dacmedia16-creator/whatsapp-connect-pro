@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { supabase } from "@/integrations/supabase/client";
@@ -407,6 +407,3 @@ function CampaignWizard({ onDone }: { onDone: () => void }) {
     </Dialog>
   );
 }
-
-// keep useMemo reachable for future expansions / lint
-export const _unused = useMemo;
