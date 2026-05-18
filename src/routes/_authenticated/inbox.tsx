@@ -223,6 +223,8 @@ function ConversationPanel({ conv, currentUserId, role }: { conv: any; currentUs
         .limit(500);
       return data ?? [];
     },
+    refetchInterval: 4000,
+    refetchIntervalInBackground: true,
   });
 
   const { data: quickReplies = [] } = useQuery({
