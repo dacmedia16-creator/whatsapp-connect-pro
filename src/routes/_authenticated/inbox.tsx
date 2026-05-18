@@ -42,6 +42,7 @@ function InboxPage() {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [channelFilter, setChannelFilter] = useState<string>("all");
   const markRead = useServerFn(markConversationReadFn);
+  const [rtStatus, setRtStatus] = useState<"connecting" | "live" | "offline">("connecting");
 
   const { data: channelOptions = [] } = useQuery({
     queryKey: ["inbox-channel-options"],
@@ -63,7 +64,11 @@ function InboxPage() {
         const convId = (payload.new as any)?.conversation_id ?? (payload.old as any)?.conversation_id;
         if (convId) qc.invalidateQueries({ queryKey: ["inbox-messages", convId] });
       })
-      .subscribe();
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") setRtStatus("live");
+        else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") setRtStatus("offline");
+        else setRtStatus("connecting");
+      });
     return () => {
       supabase.removeChannel(ch);
     };
@@ -110,10 +115,32 @@ function InboxPage() {
   return (
     <div className="h-[calc(100vh-3.5rem)] flex flex-col">
       <div className="px-6 pt-4 pb-2">
-        <PageHeader
-          title="Caixa de entrada"
-          description="Atenda conversas em tempo real, atribua e responda com agilidade."
-        />
+        <div className="flex items-start justify-between gap-3">
+          <PageHeader
+            title="Caixa de entrada"
+            description="Atenda conversas em tempo real, atribua e responda com agilidade."
+          />
+          <div
+            className="flex items-center gap-1.5 text-xs text-muted-foreground mt-1 shrink-0"
+            title={
+              rtStatus === "live"
+                ? "Conectado em tempo real (WebSocket)"
+                : rtStatus === "connecting"
+                ? "Conectando ao canal de tempo real…"
+                : "Sem conexão em tempo real — atualizando por polling"
+            }
+          >
+            <span
+              className={cn(
+                "h-2 w-2 rounded-full",
+                rtStatus === "live" && "bg-success animate-pulse",
+                rtStatus === "connecting" && "bg-warning animate-pulse",
+                rtStatus === "offline" && "bg-destructive",
+              )}
+            />
+            {rtStatus === "live" ? "Tempo real" : rtStatus === "connecting" ? "Conectando…" : "Offline"}
+          </div>
+        </div>
       </div>
       <div className="flex-1 flex min-h-0 border-t">
         {/* Lista */}
