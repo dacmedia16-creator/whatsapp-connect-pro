@@ -227,9 +227,31 @@ export const processQueueFn = createServerFn({ method: "POST" })
       .order("scheduled_for", { ascending: true })
       .limit(50);
 
+    if (!items?.length) {
+      const { data: nextItem } = await supabaseAdmin
+        .from("message_queue")
+        .select("scheduled_for, last_error")
+        .eq("status", "pending")
+        .order("scheduled_for", { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      return {
+        sent: 0,
+        failed: 0,
+        skipped: 0,
+        totalProcessed: 0,
+        pending: nextItem ? 1 : 0,
+        nextScheduledFor: nextItem?.scheduled_for ?? null,
+        message: nextItem
+          ? "Nenhuma mensagem vencida para processar agora"
+          : "Não há mensagens pendentes na fila",
+      };
+    }
+
     let sent = 0;
     let failed = 0;
     let skipped = 0;
+    let rescheduled = 0;
 
     for (const item of items ?? []) {
       const ch = item.channel as any;
