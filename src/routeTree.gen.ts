@@ -14,6 +14,7 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthenticatedSettingsRouteImport } from './routes/_authenticated/settings'
+import { Route as AuthenticatedSendingPanelRouteImport } from './routes/_authenticated/sending-panel'
 import { Route as AuthenticatedReportsRouteImport } from './routes/_authenticated/reports'
 import { Route as AuthenticatedInboxRouteImport } from './routes/_authenticated/inbox'
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
@@ -48,6 +49,12 @@ const AuthenticatedSettingsRoute = AuthenticatedSettingsRouteImport.update({
   path: '/settings',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
+const AuthenticatedSendingPanelRoute =
+  AuthenticatedSendingPanelRouteImport.update({
+    id: '/sending-panel',
+    path: '/sending-panel',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
 const AuthenticatedReportsRoute = AuthenticatedReportsRouteImport.update({
   id: '/reports',
   path: '/reports',
@@ -107,6 +114,7 @@ export interface FileRoutesByFullPath {
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/inbox': typeof AuthenticatedInboxRoute
   '/reports': typeof AuthenticatedReportsRoute
+  '/sending-panel': typeof AuthenticatedSendingPanelRoute
   '/settings': typeof AuthenticatedSettingsRoute
   '/campaigns/$campaignId': typeof AuthenticatedCampaignsCampaignIdRoute
   '/campaigns/': typeof AuthenticatedCampaignsIndexRoute
@@ -122,6 +130,7 @@ export interface FileRoutesByTo {
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/inbox': typeof AuthenticatedInboxRoute
   '/reports': typeof AuthenticatedReportsRoute
+  '/sending-panel': typeof AuthenticatedSendingPanelRoute
   '/settings': typeof AuthenticatedSettingsRoute
   '/campaigns/$campaignId': typeof AuthenticatedCampaignsCampaignIdRoute
   '/campaigns': typeof AuthenticatedCampaignsIndexRoute
@@ -139,6 +148,7 @@ export interface FileRoutesById {
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
   '/_authenticated/inbox': typeof AuthenticatedInboxRoute
   '/_authenticated/reports': typeof AuthenticatedReportsRoute
+  '/_authenticated/sending-panel': typeof AuthenticatedSendingPanelRoute
   '/_authenticated/settings': typeof AuthenticatedSettingsRoute
   '/_authenticated/campaigns/$campaignId': typeof AuthenticatedCampaignsCampaignIdRoute
   '/_authenticated/campaigns/': typeof AuthenticatedCampaignsIndexRoute
@@ -156,6 +166,7 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/inbox'
     | '/reports'
+    | '/sending-panel'
     | '/settings'
     | '/campaigns/$campaignId'
     | '/campaigns/'
@@ -171,6 +182,7 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/inbox'
     | '/reports'
+    | '/sending-panel'
     | '/settings'
     | '/campaigns/$campaignId'
     | '/campaigns'
@@ -187,6 +199,7 @@ export interface FileRouteTypes {
     | '/_authenticated/dashboard'
     | '/_authenticated/inbox'
     | '/_authenticated/reports'
+    | '/_authenticated/sending-panel'
     | '/_authenticated/settings'
     | '/_authenticated/campaigns/$campaignId'
     | '/_authenticated/campaigns/'
@@ -238,6 +251,13 @@ declare module '@tanstack/react-router' {
       path: '/settings'
       fullPath: '/settings'
       preLoaderRoute: typeof AuthenticatedSettingsRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/sending-panel': {
+      id: '/_authenticated/sending-panel'
+      path: '/sending-panel'
+      fullPath: '/sending-panel'
+      preLoaderRoute: typeof AuthenticatedSendingPanelRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
     '/_authenticated/reports': {
@@ -312,6 +332,7 @@ interface AuthenticatedRouteChildren {
   AuthenticatedDashboardRoute: typeof AuthenticatedDashboardRoute
   AuthenticatedInboxRoute: typeof AuthenticatedInboxRoute
   AuthenticatedReportsRoute: typeof AuthenticatedReportsRoute
+  AuthenticatedSendingPanelRoute: typeof AuthenticatedSendingPanelRoute
   AuthenticatedSettingsRoute: typeof AuthenticatedSettingsRoute
   AuthenticatedCampaignsCampaignIdRoute: typeof AuthenticatedCampaignsCampaignIdRoute
   AuthenticatedCampaignsIndexRoute: typeof AuthenticatedCampaignsIndexRoute
@@ -323,6 +344,7 @@ const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedDashboardRoute: AuthenticatedDashboardRoute,
   AuthenticatedInboxRoute: AuthenticatedInboxRoute,
   AuthenticatedReportsRoute: AuthenticatedReportsRoute,
+  AuthenticatedSendingPanelRoute: AuthenticatedSendingPanelRoute,
   AuthenticatedSettingsRoute: AuthenticatedSettingsRoute,
   AuthenticatedCampaignsCampaignIdRoute: AuthenticatedCampaignsCampaignIdRoute,
   AuthenticatedCampaignsIndexRoute: AuthenticatedCampaignsIndexRoute,
