@@ -5,85 +5,26 @@ import { useServerFn } from "@tanstack/react-start";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
 import { PageHeader } from "@/components/page-header";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { Separator } from "@/components/ui/separator";
-import { ArrowLeft, ArrowUp, ArrowDown, Save, RotateCcw, Send, Smartphone } from "lucide-react";
+import { ArrowLeft, Save, RotateCcw, Send } from "lucide-react";
 import { toast } from "sonner";
 import { getSendSettingsFn, upsertSendSettingsFn } from "@/lib/send-panel.functions";
-import { formatPhone } from "@/lib/phone";
+import {
+  SendSettingsForm,
+  SEND_SETTINGS_DEFAULTS,
+  validateSendSettings,
+  type SendSettingsState,
+  type RotationMode,
+} from "@/components/campaign/send-settings-form";
 
 export const Route = createFileRoute("/_authenticated/campaigns/$campaignId/settings")({
   component: CampaignSendSettingsPage,
   head: () => ({ meta: [{ title: "Configurações de Envio — ZionFlow" }] }),
 });
 
-type RotationMode = "round_robin" | "least_used" | "manual_priority";
-
-type FormState = {
-  selected_channel_ids: string[];
-  rotation_mode: RotationMode;
-  channel_priority: string[];
-  delay_seconds: number;
-  random_delay_min: number | null;
-  random_delay_max: number | null;
-  max_per_minute: number;
-  max_per_hour: number;
-  max_per_day_per_channel: number;
-  allowed_start_time: string;
-  allowed_end_time: string;
-  allowed_weekdays: number[];
-  timezone: string;
-  auto_pause_outside_hours: boolean;
-  auto_pause_on_all_channels_down: boolean;
-};
-
-const DEFAULTS: FormState = {
-  selected_channel_ids: [],
-  rotation_mode: "round_robin",
-  channel_priority: [],
-  delay_seconds: 30,
-  random_delay_min: null,
-  random_delay_max: null,
-  max_per_minute: 20,
-  max_per_hour: 200,
-  max_per_day_per_channel: 500,
-  allowed_start_time: "09:00",
-  allowed_end_time: "18:00",
-  allowed_weekdays: [1, 2, 3, 4, 5],
-  timezone: "America/Sao_Paulo",
-  auto_pause_outside_hours: true,
-  auto_pause_on_all_channels_down: true,
-};
-
-const WEEKDAYS = [
-  { id: 0, label: "Dom" },
-  { id: 1, label: "Seg" },
-  { id: 2, label: "Ter" },
-  { id: 3, label: "Qua" },
-  { id: 4, label: "Qui" },
-  { id: 5, label: "Sex" },
-  { id: 6, label: "Sáb" },
-];
-
-const TIMEZONES = [
-  "America/Sao_Paulo",
-  "America/Manaus",
-  "America/Recife",
-  "America/Belem",
-  "America/Fortaleza",
-  "America/Cuiaba",
-  "America/Bahia",
-  "America/Argentina/Buenos_Aires",
-  "UTC",
-];
+type FormState = SendSettingsState;
+const DEFAULTS = SEND_SETTINGS_DEFAULTS;
 
 function normalizeTime(t: string) {
   return (t ?? "").slice(0, 5);
@@ -153,23 +94,8 @@ function CampaignSendSettingsPage() {
 
   const saveMut = useMutation({
     mutationFn: async () => {
-      // validações cliente
-      if (!form.selected_channel_ids.length) throw new Error("Selecione ao menos 1 canal.");
-      if (form.random_delay_min !== null && form.random_delay_max !== null
-        && form.random_delay_min > form.random_delay_max) {
-        throw new Error("Delay aleatório: mínimo não pode ser maior que máximo.");
-      }
-      if (form.allowed_start_time >= form.allowed_end_time) {
-        throw new Error("Horário inicial deve ser menor que o final.");
-      }
-      if (form.rotation_mode === "manual_priority") {
-        const set = new Set(form.selected_channel_ids);
-        const priority = form.channel_priority.filter((id) => set.has(id));
-        const missing = form.selected_channel_ids.filter((id) => !priority.includes(id));
-        if (priority.length + missing.length !== form.selected_channel_ids.length) {
-          throw new Error("Lista de prioridade inválida.");
-        }
-      }
+      const err = validateSendSettings(form);
+      if (err) throw new Error(err);
       await upsertSettings({ data: { campaignId, ...form } });
     },
     onSuccess: () => {
@@ -178,37 +104,6 @@ function CampaignSendSettingsPage() {
     },
     onError: (e: Error) => toast.error(e.message),
   });
-
-  function toggleChannel(id: string, on: boolean) {
-    setForm((f) => {
-      const selected = on
-        ? Array.from(new Set([...f.selected_channel_ids, id]))
-        : f.selected_channel_ids.filter((x) => x !== id);
-      const priority = f.channel_priority.filter((x) => selected.includes(x));
-      const missing = selected.filter((x) => !priority.includes(x));
-      return { ...f, selected_channel_ids: selected, channel_priority: [...priority, ...missing] };
-    });
-  }
-
-  function moveChannel(id: string, dir: -1 | 1) {
-    setForm((f) => {
-      const arr = [...f.channel_priority];
-      const i = arr.indexOf(id);
-      const j = i + dir;
-      if (i < 0 || j < 0 || j >= arr.length) return f;
-      [arr[i], arr[j]] = [arr[j], arr[i]];
-      return { ...f, channel_priority: arr };
-    });
-  }
-
-  function toggleWeekday(d: number, on: boolean) {
-    setForm((f) => {
-      const next = on
-        ? Array.from(new Set([...f.allowed_weekdays, d])).sort()
-        : f.allowed_weekdays.filter((x) => x !== d);
-      return { ...f, allowed_weekdays: next };
-    });
-  }
 
   if (!canManage) {
     return (
