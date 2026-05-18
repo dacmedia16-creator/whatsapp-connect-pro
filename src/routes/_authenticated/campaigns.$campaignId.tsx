@@ -96,7 +96,7 @@ function CampaignDetail() {
   });
 
   const statusMut = useMutation({
-    mutationFn: async (next: string) => {
+    mutationFn: async (next: "draft" | "scheduled" | "running" | "paused" | "done") => {
       const { error } = await supabase.from("campaigns").update({ status: next }).eq("id", campaignId);
       if (error) throw error;
     },
@@ -146,8 +146,8 @@ function CampaignDetail() {
                   </Button>
                 )}
                 {(campaign.status === "running" || campaign.status === "paused" || campaign.status === "scheduled") && (
-                  <Button variant="outline" onClick={() => statusMut.mutate("canceled")}>
-                    <Square className="h-4 w-4 mr-1" /> Cancelar
+                  <Button variant="outline" onClick={() => statusMut.mutate("done")}>
+                    <Square className="h-4 w-4 mr-1" /> Finalizar
                   </Button>
                 )}
               </div>
