@@ -22,6 +22,8 @@ import { Plus, Plug, Pause, Play, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { normalizePhoneE164, formatPhone } from "@/lib/phone";
 import { testChannelFn } from "@/lib/ziontalk.functions";
+import { createChannelFn } from "@/lib/channels.functions";
+import { useServerFn } from "@tanstack/react-start";
 
 export const Route = createFileRoute("/_authenticated/channels")({
   component: ChannelsPage,
@@ -33,6 +35,7 @@ function ChannelsPage() {
   const isAdmin = role === "admin";
   const qc = useQueryClient();
   const testChannel = useServerFn(testChannelFn);
+  const createChannel = useServerFn(createChannelFn);
   const [open, setOpen] = useState(false);
   const [label, setLabel] = useState("");
   const [phone, setPhone] = useState("");
@@ -44,7 +47,7 @@ function ChannelsPage() {
     queryFn: async () => {
       const { data } = await supabase
         .from("channels")
-        .select("*")
+        .select("id,label,phone_e164,status,daily_limit,sent_today,sent_today_date,last_error,business_hours,zion_api_key_hint,created_at")
         .order("created_at", { ascending: false });
       return data ?? [];
     },
@@ -55,13 +58,14 @@ function ChannelsPage() {
       const e164 = normalizePhoneE164(phone);
       if (!e164) throw new Error("Telefone inválido");
       if (!apiKey.trim()) throw new Error("API Key obrigatória");
-      const { error } = await supabase.from("channels").insert({
-        label,
-        phone_e164: e164,
-        zion_api_key: apiKey.trim(),
-        daily_limit: dailyLimit,
+      await createChannel({
+        data: {
+          label,
+          phone_e164: e164,
+          zion_api_key: apiKey.trim(),
+          daily_limit: dailyLimit,
+        },
       });
-      if (error) throw error;
     },
     onSuccess: () => {
       toast.success("Canal cadastrado");
