@@ -15,6 +15,23 @@ const PayloadSchema = z.object({
   name: z.string().max(120).optional(),
 }).passthrough();
 
+function flattenZionPayload(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object") return raw;
+  const r = raw as Record<string, any>;
+  // já está plano
+  if (r.from || r.mobile_phone || r.message || r.msg || r.body) return r;
+  const contato = r.contato ?? r.contact ?? {};
+  const mensagem = r.mensagem ?? r.message_data ?? {};
+  return {
+    ...r,
+    from: contato.telefone ?? contato.phone ?? contato.numero,
+    name: contato.nome ?? contato.name,
+    body: typeof r.mensagem === "string" ? r.mensagem : (mensagem.texto ?? mensagem.text ?? mensagem.body),
+    to: mensagem.canal ?? mensagem.channel ?? mensagem.destino,
+    external_id: r.external_id ?? r.id ?? mensagem.id,
+  };
+}
+
 function normalize(phone: string): string {
   const digits = phone.replace(/\D/g, "");
   return digits.startsWith("+") ? phone : `+${digits}`;
@@ -32,7 +49,8 @@ export const Route = createFileRoute("/api/public/webhooks/ziontalk")({
 
         let raw: unknown;
         try { raw = await request.json(); } catch { return new Response("JSON inválido", { status: 400 }); }
-        const parsed = PayloadSchema.safeParse(raw);
+        const flat = flattenZionPayload(raw);
+        const parsed = PayloadSchema.safeParse(flat);
         if (!parsed.success) return new Response("Payload inválido", { status: 400 });
         const p = parsed.data;
 
