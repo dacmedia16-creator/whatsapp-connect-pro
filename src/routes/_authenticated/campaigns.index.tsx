@@ -38,7 +38,7 @@ import { listContactListsFn, previewRecipientsFn, createCampaignFn } from "@/lib
 import { emptySummary, renderTemplate, type ResolvedContact, type ResolveSummary } from "@/lib/recipient-resolver";
 import { normalizePhoneE164 } from "@/lib/phone";
 
-export const Route = createFileRoute("/_authenticated/campaigns")({
+export const Route = createFileRoute("/_authenticated/campaigns/")({
   component: CampaignsPage,
   head: () => ({ meta: [{ title: "Campanhas — ZionFlow" }] }),
 });
