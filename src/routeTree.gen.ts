@@ -13,11 +13,16 @@ import { Route as SignupRouteImport } from './routes/signup'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AuthenticatedSettingsRouteImport } from './routes/_authenticated/settings'
+import { Route as AuthenticatedReportsRouteImport } from './routes/_authenticated/reports'
+import { Route as AuthenticatedInboxRouteImport } from './routes/_authenticated/inbox'
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
 import { Route as AuthenticatedContactsRouteImport } from './routes/_authenticated/contacts'
 import { Route as AuthenticatedChannelsRouteImport } from './routes/_authenticated/channels'
 import { Route as AuthenticatedCampaignsRouteImport } from './routes/_authenticated/campaigns'
 import { Route as AuthenticatedCampaignsCampaignIdRouteImport } from './routes/_authenticated/campaigns.$campaignId'
+import { Route as ApiPublicWebhooksZiontalkRouteImport } from './routes/api/public/webhooks/ziontalk'
+import { Route as ApiPublicHooksProcessQueueRouteImport } from './routes/api/public/hooks/process-queue'
 
 const SignupRoute = SignupRouteImport.update({
   id: '/signup',
@@ -37,6 +42,21 @@ const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
+} as any)
+const AuthenticatedSettingsRoute = AuthenticatedSettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
+const AuthenticatedReportsRoute = AuthenticatedReportsRouteImport.update({
+  id: '/reports',
+  path: '/reports',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
+const AuthenticatedInboxRoute = AuthenticatedInboxRouteImport.update({
+  id: '/inbox',
+  path: '/inbox',
+  getParentRoute: () => AuthenticatedRoute,
 } as any)
 const AuthenticatedDashboardRoute = AuthenticatedDashboardRouteImport.update({
   id: '/dashboard',
@@ -64,6 +84,18 @@ const AuthenticatedCampaignsCampaignIdRoute =
     path: '/$campaignId',
     getParentRoute: () => AuthenticatedCampaignsRoute,
   } as any)
+const ApiPublicWebhooksZiontalkRoute =
+  ApiPublicWebhooksZiontalkRouteImport.update({
+    id: '/api/public/webhooks/ziontalk',
+    path: '/api/public/webhooks/ziontalk',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiPublicHooksProcessQueueRoute =
+  ApiPublicHooksProcessQueueRouteImport.update({
+    id: '/api/public/hooks/process-queue',
+    path: '/api/public/hooks/process-queue',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -73,7 +105,12 @@ export interface FileRoutesByFullPath {
   '/channels': typeof AuthenticatedChannelsRoute
   '/contacts': typeof AuthenticatedContactsRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
+  '/inbox': typeof AuthenticatedInboxRoute
+  '/reports': typeof AuthenticatedReportsRoute
+  '/settings': typeof AuthenticatedSettingsRoute
   '/campaigns/$campaignId': typeof AuthenticatedCampaignsCampaignIdRoute
+  '/api/public/hooks/process-queue': typeof ApiPublicHooksProcessQueueRoute
+  '/api/public/webhooks/ziontalk': typeof ApiPublicWebhooksZiontalkRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -83,7 +120,12 @@ export interface FileRoutesByTo {
   '/channels': typeof AuthenticatedChannelsRoute
   '/contacts': typeof AuthenticatedContactsRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
+  '/inbox': typeof AuthenticatedInboxRoute
+  '/reports': typeof AuthenticatedReportsRoute
+  '/settings': typeof AuthenticatedSettingsRoute
   '/campaigns/$campaignId': typeof AuthenticatedCampaignsCampaignIdRoute
+  '/api/public/hooks/process-queue': typeof ApiPublicHooksProcessQueueRoute
+  '/api/public/webhooks/ziontalk': typeof ApiPublicWebhooksZiontalkRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -95,7 +137,12 @@ export interface FileRoutesById {
   '/_authenticated/channels': typeof AuthenticatedChannelsRoute
   '/_authenticated/contacts': typeof AuthenticatedContactsRoute
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
+  '/_authenticated/inbox': typeof AuthenticatedInboxRoute
+  '/_authenticated/reports': typeof AuthenticatedReportsRoute
+  '/_authenticated/settings': typeof AuthenticatedSettingsRoute
   '/_authenticated/campaigns/$campaignId': typeof AuthenticatedCampaignsCampaignIdRoute
+  '/api/public/hooks/process-queue': typeof ApiPublicHooksProcessQueueRoute
+  '/api/public/webhooks/ziontalk': typeof ApiPublicWebhooksZiontalkRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -107,7 +154,12 @@ export interface FileRouteTypes {
     | '/channels'
     | '/contacts'
     | '/dashboard'
+    | '/inbox'
+    | '/reports'
+    | '/settings'
     | '/campaigns/$campaignId'
+    | '/api/public/hooks/process-queue'
+    | '/api/public/webhooks/ziontalk'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -117,7 +169,12 @@ export interface FileRouteTypes {
     | '/channels'
     | '/contacts'
     | '/dashboard'
+    | '/inbox'
+    | '/reports'
+    | '/settings'
     | '/campaigns/$campaignId'
+    | '/api/public/hooks/process-queue'
+    | '/api/public/webhooks/ziontalk'
   id:
     | '__root__'
     | '/'
@@ -128,7 +185,12 @@ export interface FileRouteTypes {
     | '/_authenticated/channels'
     | '/_authenticated/contacts'
     | '/_authenticated/dashboard'
+    | '/_authenticated/inbox'
+    | '/_authenticated/reports'
+    | '/_authenticated/settings'
     | '/_authenticated/campaigns/$campaignId'
+    | '/api/public/hooks/process-queue'
+    | '/api/public/webhooks/ziontalk'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -136,6 +198,8 @@ export interface RootRouteChildren {
   AuthenticatedRoute: typeof AuthenticatedRouteWithChildren
   LoginRoute: typeof LoginRoute
   SignupRoute: typeof SignupRoute
+  ApiPublicHooksProcessQueueRoute: typeof ApiPublicHooksProcessQueueRoute
+  ApiPublicWebhooksZiontalkRoute: typeof ApiPublicWebhooksZiontalkRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -167,6 +231,27 @@ declare module '@tanstack/react-router' {
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/_authenticated/settings': {
+      id: '/_authenticated/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof AuthenticatedSettingsRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/reports': {
+      id: '/_authenticated/reports'
+      path: '/reports'
+      fullPath: '/reports'
+      preLoaderRoute: typeof AuthenticatedReportsRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/inbox': {
+      id: '/_authenticated/inbox'
+      path: '/inbox'
+      fullPath: '/inbox'
+      preLoaderRoute: typeof AuthenticatedInboxRouteImport
+      parentRoute: typeof AuthenticatedRoute
     }
     '/_authenticated/dashboard': {
       id: '/_authenticated/dashboard'
@@ -203,6 +288,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedCampaignsCampaignIdRouteImport
       parentRoute: typeof AuthenticatedCampaignsRoute
     }
+    '/api/public/webhooks/ziontalk': {
+      id: '/api/public/webhooks/ziontalk'
+      path: '/api/public/webhooks/ziontalk'
+      fullPath: '/api/public/webhooks/ziontalk'
+      preLoaderRoute: typeof ApiPublicWebhooksZiontalkRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/public/hooks/process-queue': {
+      id: '/api/public/hooks/process-queue'
+      path: '/api/public/hooks/process-queue'
+      fullPath: '/api/public/hooks/process-queue'
+      preLoaderRoute: typeof ApiPublicHooksProcessQueueRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -226,6 +325,9 @@ interface AuthenticatedRouteChildren {
   AuthenticatedChannelsRoute: typeof AuthenticatedChannelsRoute
   AuthenticatedContactsRoute: typeof AuthenticatedContactsRoute
   AuthenticatedDashboardRoute: typeof AuthenticatedDashboardRoute
+  AuthenticatedInboxRoute: typeof AuthenticatedInboxRoute
+  AuthenticatedReportsRoute: typeof AuthenticatedReportsRoute
+  AuthenticatedSettingsRoute: typeof AuthenticatedSettingsRoute
 }
 
 const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
@@ -233,6 +335,9 @@ const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedChannelsRoute: AuthenticatedChannelsRoute,
   AuthenticatedContactsRoute: AuthenticatedContactsRoute,
   AuthenticatedDashboardRoute: AuthenticatedDashboardRoute,
+  AuthenticatedInboxRoute: AuthenticatedInboxRoute,
+  AuthenticatedReportsRoute: AuthenticatedReportsRoute,
+  AuthenticatedSettingsRoute: AuthenticatedSettingsRoute,
 }
 
 const AuthenticatedRouteWithChildren = AuthenticatedRoute._addFileChildren(
@@ -244,7 +349,19 @@ const rootRouteChildren: RootRouteChildren = {
   AuthenticatedRoute: AuthenticatedRouteWithChildren,
   LoginRoute: LoginRoute,
   SignupRoute: SignupRoute,
+  ApiPublicHooksProcessQueueRoute: ApiPublicHooksProcessQueueRoute,
+  ApiPublicWebhooksZiontalkRoute: ApiPublicWebhooksZiontalkRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}
