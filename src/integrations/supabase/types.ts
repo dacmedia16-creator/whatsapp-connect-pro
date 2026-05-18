@@ -204,6 +204,7 @@ export type Database = {
           status: Database["public"]["Enums"]["channel_status"]
           updated_at: string
           zion_api_key: string
+          zion_api_key_encrypted: string | null
           zion_api_key_hint: string | null
         }
         Insert: {
@@ -220,6 +221,7 @@ export type Database = {
           status?: Database["public"]["Enums"]["channel_status"]
           updated_at?: string
           zion_api_key: string
+          zion_api_key_encrypted?: string | null
           zion_api_key_hint?: string | null
         }
         Update: {
@@ -236,6 +238,7 @@ export type Database = {
           status?: Database["public"]["Enums"]["channel_status"]
           updated_at?: string
           zion_api_key?: string
+          zion_api_key_encrypted?: string | null
           zion_api_key_hint?: string | null
         }
         Relationships: []
@@ -654,12 +657,20 @@ export type Database = {
         Args: never
         Returns: Database["public"]["Enums"]["app_role"]
       }
+      get_channel_api_key: {
+        Args: { p_channel_id: string; p_secret: string }
+        Returns: string
+      }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
           _user_id: string
         }
         Returns: boolean
+      }
+      set_channel_api_key: {
+        Args: { p_channel_id: string; p_plain_key: string; p_secret: string }
+        Returns: undefined
       }
       unaccent_safe: { Args: { txt: string }; Returns: string }
     }

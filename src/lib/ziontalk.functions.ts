@@ -2,6 +2,18 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+
+async function getChannelApiKey(channelId: string): Promise<string> {
+  const secret = process.env.CHANNEL_KEY_SECRET;
+  if (!secret) throw new Error("CHANNEL_KEY_SECRET não configurado");
+  const { data, error } = await supabaseAdmin.rpc("get_channel_api_key", {
+    p_channel_id: channelId,
+    p_secret: secret,
+  });
+  if (error) throw new Error(error.message);
+  if (!data) throw new Error("Chave de API do canal indisponível");
+  return data as string;
+}
 import { zionSendMessage, logSend } from "./ziontalk.server";
 
 /** Send a message via a specific channel. Used by admin actions and inbox replies. */
@@ -71,7 +83,7 @@ export const sendMessageFn = createServerFn({ method: "POST" })
     }
 
     const result = await zionSendMessage({
-      apiKey: channel.zion_api_key,
+      apiKey: await getChannelApiKey(channel.id),
       phone: contact.phone_e164,
       msg: data.message,
     });
@@ -172,9 +184,10 @@ export const testChannelFn = createServerFn({ method: "POST" })
     const form = new FormData();
     form.append("msg", "__test__");
     form.append("mobile_phone", "+0000000000");
+    const apiKey = await getChannelApiKey(channel.id);
     const res = await fetch("https://app.ziontalk.com/api/send_message/", {
       method: "POST",
-      headers: { Authorization: "Basic " + Buffer.from(`${channel.zion_api_key}:`).toString("base64") },
+      headers: { Authorization: "Basic " + Buffer.from(`${apiKey}:`).toString("base64") },
       body: form,
     });
     const text = await res.text();
@@ -272,7 +285,7 @@ export const processQueueFn = createServerFn({ method: "POST" })
         .eq("id", item.id);
 
       const result = await zionSendMessage({
-        apiKey: ch.zion_api_key,
+        apiKey: await getChannelApiKey(ch.id),
         phone: ct.phone_e164,
         msg: item.rendered_text,
       });
