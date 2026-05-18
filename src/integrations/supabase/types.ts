@@ -204,6 +204,7 @@ export type Database = {
           status: Database["public"]["Enums"]["channel_status"]
           updated_at: string
           zion_api_key: string
+          zion_api_key_hint: string | null
         }
         Insert: {
           business_hours?: Json
@@ -219,6 +220,7 @@ export type Database = {
           status?: Database["public"]["Enums"]["channel_status"]
           updated_at?: string
           zion_api_key: string
+          zion_api_key_hint?: string | null
         }
         Update: {
           business_hours?: Json
@@ -234,6 +236,7 @@ export type Database = {
           status?: Database["public"]["Enums"]["channel_status"]
           updated_at?: string
           zion_api_key?: string
+          zion_api_key_hint?: string | null
         }
         Relationships: []
       }
