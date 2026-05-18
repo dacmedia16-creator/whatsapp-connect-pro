@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
+import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
@@ -11,7 +12,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { useAuth } from "@/hooks/use-auth";
-import { ArrowLeft, Play, Pause, Send, Square, RefreshCw } from "lucide-react";
+import { ArrowLeft, Play, Pause, Send, Square, RefreshCw, Radio } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -30,6 +31,8 @@ function CampaignDetail() {
   const qc = useQueryClient();
   const enqueue = useServerFn(enqueueCampaignFn);
   const processBatch = useServerFn(processQueueFn);
+  const [live, setLive] = useState(false);
+  const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
 
   const { data: campaign, isLoading } = useQuery({
     queryKey: ["campaign", campaignId],
@@ -42,7 +45,7 @@ function CampaignDetail() {
       if (error) throw error;
       return data;
     },
-    refetchInterval: 5000,
+    refetchInterval: live ? false : 10000,
   });
 
   const { data: stats } = useQuery({
@@ -58,7 +61,7 @@ function CampaignDetail() {
       });
       return { ...counts, total: (data ?? []).length };
     },
-    refetchInterval: 5000,
+    refetchInterval: live ? false : 10000,
   });
 
   const { data: recipients = [] } = useQuery({
@@ -72,8 +75,37 @@ function CampaignDetail() {
         .limit(200);
       return data ?? [];
     },
-    refetchInterval: 5000,
+    refetchInterval: live ? false : 10000,
   });
+
+  // Realtime: subscribe to changes for this campaign and invalidate queries
+  useEffect(() => {
+    const channel = supabase
+      .channel(`campaign:${campaignId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "campaigns", filter: `id=eq.${campaignId}` },
+        () => {
+          setLastUpdate(new Date());
+          qc.invalidateQueries({ queryKey: ["campaign", campaignId] });
+        },
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "campaign_recipients", filter: `campaign_id=eq.${campaignId}` },
+        () => {
+          setLastUpdate(new Date());
+          qc.invalidateQueries({ queryKey: ["campaign-stats", campaignId] });
+          qc.invalidateQueries({ queryKey: ["campaign-recipients", campaignId] });
+        },
+      )
+      .subscribe((status) => {
+        setLive(status === "SUBSCRIBED");
+      });
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [campaignId, qc]);
 
   const startMut = useMutation({
     mutationFn: async () => enqueue({ data: { campaignId } }),
@@ -125,6 +157,14 @@ function CampaignDetail() {
           actions={
             canManage && (
               <div className="flex gap-2">
+                <Badge
+                  variant="outline"
+                  className={`gap-1 self-center ${live ? "border-success text-success" : "border-muted text-muted-foreground"}`}
+                  title={lastUpdate ? `Última atualização: ${format(lastUpdate, "HH:mm:ss")}` : "Aguardando eventos"}
+                >
+                  <Radio className={`h-3 w-3 ${live ? "animate-pulse" : ""}`} />
+                  {live ? "Ao vivo" : "Offline"}
+                </Badge>
                 {(campaign.status === "draft" || campaign.status === "scheduled") && (
                   <Button onClick={() => startMut.mutate()} disabled={startMut.isPending}>
                     <Play className="h-4 w-4 mr-1" /> Iniciar envio
