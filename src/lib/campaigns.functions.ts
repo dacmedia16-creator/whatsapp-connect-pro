@@ -274,32 +274,26 @@ export const createCampaignFn = createServerFn({ method: "POST" })
     const { error: rErr } = await supabaseAdmin.from("campaign_recipients").insert(recipientRows);
     if (rErr) throw new Error(rErr.message);
 
-    // Persistir campaign_send_settings (avançado), se fornecido — senão usa defaults com canais selecionados.
+    // Persistir campaign_send_settings — usa defaults quando não fornecido.
     const s = data.sendSettings;
-    const settingsRow = s
-      ? {
-          campaign_id: campaign.id,
-          selected_channel_ids: s.selected_channel_ids.length ? s.selected_channel_ids : channelIds,
-          rotation_mode: s.rotation_mode,
-          channel_priority: s.channel_priority,
-          delay_seconds: s.delay_seconds,
-          random_delay_min: s.random_delay_min,
-          random_delay_max: s.random_delay_max,
-          max_per_minute: s.max_per_minute,
-          max_per_hour: s.max_per_hour,
-          max_per_day_per_channel: s.max_per_day_per_channel,
-          allowed_start_time: s.allowed_start_time,
-          allowed_end_time: s.allowed_end_time,
-          allowed_weekdays: s.allowed_weekdays,
-          timezone: s.timezone,
-          auto_pause_outside_hours: s.auto_pause_outside_hours,
-          auto_pause_on_all_channels_down: s.auto_pause_on_all_channels_down,
-        }
-      : {
-          campaign_id: campaign.id,
-          selected_channel_ids: channelIds,
-          channel_priority: channelIds,
-        };
+    const settingsRow = {
+      campaign_id: campaign.id,
+      selected_channel_ids: s?.selected_channel_ids?.length ? s.selected_channel_ids : channelIds,
+      rotation_mode: s?.rotation_mode ?? ("round_robin" as const),
+      channel_priority: s?.channel_priority?.length ? s.channel_priority : channelIds,
+      delay_seconds: s?.delay_seconds ?? 30,
+      random_delay_min: s?.random_delay_min ?? null,
+      random_delay_max: s?.random_delay_max ?? null,
+      max_per_minute: s?.max_per_minute ?? 20,
+      max_per_hour: s?.max_per_hour ?? 200,
+      max_per_day_per_channel: s?.max_per_day_per_channel ?? 500,
+      allowed_start_time: s?.allowed_start_time ?? "09:00",
+      allowed_end_time: s?.allowed_end_time ?? "18:00",
+      allowed_weekdays: s?.allowed_weekdays ?? [1, 2, 3, 4, 5],
+      timezone: s?.timezone ?? "America/Sao_Paulo",
+      auto_pause_outside_hours: s?.auto_pause_outside_hours ?? true,
+      auto_pause_on_all_channels_down: s?.auto_pause_on_all_channels_down ?? true,
+    };
     const { error: sErr } = await supabaseAdmin
       .from("campaign_send_settings")
       .upsert(settingsRow, { onConflict: "campaign_id" });
