@@ -9,6 +9,7 @@ import {
   Settings,
   MessageSquareText,
   LogOut,
+  SlidersHorizontal,
 } from "lucide-react";
 import {
   Sidebar,
@@ -33,6 +34,7 @@ const items = [
   { title: "Caixa de entrada", url: "/inbox", icon: Inbox },
   { title: "Contatos", url: "/contacts", icon: Users },
   { title: "Campanhas", url: "/campaigns", icon: Megaphone },
+  { title: "Painel de envios", url: "/sending-panel", icon: SlidersHorizontal },
   { title: "Canais", url: "/channels", icon: Smartphone },
   { title: "Relatórios", url: "/reports", icon: BarChart3 },
   { title: "Configurações", url: "/settings", icon: Settings },

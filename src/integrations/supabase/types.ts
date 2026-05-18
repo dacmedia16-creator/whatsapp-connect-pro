@@ -135,6 +135,77 @@ export type Database = {
           },
         ]
       }
+      campaign_send_settings: {
+        Row: {
+          allowed_end_time: string
+          allowed_start_time: string
+          allowed_weekdays: number[]
+          auto_pause_on_all_channels_down: boolean
+          auto_pause_outside_hours: boolean
+          campaign_id: string
+          channel_priority: string[]
+          created_at: string
+          delay_seconds: number
+          max_per_day_per_channel: number
+          max_per_hour: number
+          max_per_minute: number
+          random_delay_max: number | null
+          random_delay_min: number | null
+          rotation_mode: Database["public"]["Enums"]["rotation_mode"]
+          selected_channel_ids: string[]
+          timezone: string
+          updated_at: string
+        }
+        Insert: {
+          allowed_end_time?: string
+          allowed_start_time?: string
+          allowed_weekdays?: number[]
+          auto_pause_on_all_channels_down?: boolean
+          auto_pause_outside_hours?: boolean
+          campaign_id: string
+          channel_priority?: string[]
+          created_at?: string
+          delay_seconds?: number
+          max_per_day_per_channel?: number
+          max_per_hour?: number
+          max_per_minute?: number
+          random_delay_max?: number | null
+          random_delay_min?: number | null
+          rotation_mode?: Database["public"]["Enums"]["rotation_mode"]
+          selected_channel_ids?: string[]
+          timezone?: string
+          updated_at?: string
+        }
+        Update: {
+          allowed_end_time?: string
+          allowed_start_time?: string
+          allowed_weekdays?: number[]
+          auto_pause_on_all_channels_down?: boolean
+          auto_pause_outside_hours?: boolean
+          campaign_id?: string
+          channel_priority?: string[]
+          created_at?: string
+          delay_seconds?: number
+          max_per_day_per_channel?: number
+          max_per_hour?: number
+          max_per_minute?: number
+          random_delay_max?: number | null
+          random_delay_min?: number | null
+          rotation_mode?: Database["public"]["Enums"]["rotation_mode"]
+          selected_channel_ids?: string[]
+          timezone?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "campaign_send_settings_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: true
+            referencedRelation: "campaigns"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       campaigns: {
         Row: {
           audience_filter: Json
@@ -820,6 +891,7 @@ export type Database = {
       message_direction: "in" | "out"
       queue_status: "pending" | "processing" | "sent" | "failed"
       recipient_status: "queued" | "sent" | "delivered" | "failed" | "opted_out"
+      rotation_mode: "round_robin" | "least_used" | "manual_priority"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -968,6 +1040,7 @@ export const Constants = {
       message_direction: ["in", "out"],
       queue_status: ["pending", "processing", "sent", "failed"],
       recipient_status: ["queued", "sent", "delivered", "failed", "opted_out"],
+      rotation_mode: ["round_robin", "least_used", "manual_priority"],
     },
   },
 } as const
