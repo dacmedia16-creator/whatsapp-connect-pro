@@ -189,6 +189,56 @@ export type Database = {
         }
         Relationships: []
       }
+      channel_api_keys: {
+        Row: {
+          channel_id: string
+          created_at: string
+          created_by: string | null
+          hint: string
+          id: string
+          key_encrypted: string
+          revoked_at: string | null
+          revoked_by: string | null
+          revoked_reason: string | null
+          status: Database["public"]["Enums"]["channel_key_status"]
+          version: number
+        }
+        Insert: {
+          channel_id: string
+          created_at?: string
+          created_by?: string | null
+          hint: string
+          id?: string
+          key_encrypted: string
+          revoked_at?: string | null
+          revoked_by?: string | null
+          revoked_reason?: string | null
+          status?: Database["public"]["Enums"]["channel_key_status"]
+          version: number
+        }
+        Update: {
+          channel_id?: string
+          created_at?: string
+          created_by?: string | null
+          hint?: string
+          id?: string
+          key_encrypted?: string
+          revoked_at?: string | null
+          revoked_by?: string | null
+          revoked_reason?: string | null
+          status?: Database["public"]["Enums"]["channel_key_status"]
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "channel_api_keys_channel_id_fkey"
+            columns: ["channel_id"]
+            isOneToOne: false
+            referencedRelation: "channels"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       channels: {
         Row: {
           business_hours: Json
@@ -668,6 +718,19 @@ export type Database = {
         }
         Returns: boolean
       }
+      revoke_channel_api_key: {
+        Args: { p_key_id: string; p_reason?: string; p_user: string }
+        Returns: undefined
+      }
+      rotate_channel_api_key: {
+        Args: {
+          p_channel_id: string
+          p_plain_key: string
+          p_secret: string
+          p_user: string
+        }
+        Returns: string
+      }
       set_channel_api_key: {
         Args: { p_channel_id: string; p_plain_key: string; p_secret: string }
         Returns: undefined
@@ -683,6 +746,7 @@ export type Database = {
         | "failed"
         | "opted_out"
       campaign_status: "draft" | "scheduled" | "running" | "paused" | "done"
+      channel_key_status: "active" | "superseded" | "revoked"
       channel_status: "connected" | "disconnected" | "error" | "paused"
       channel_strategy: "round_robin" | "specific"
       conversation_status:
@@ -829,6 +893,7 @@ export const Constants = {
         "opted_out",
       ],
       campaign_status: ["draft", "scheduled", "running", "paused", "done"],
+      channel_key_status: ["active", "superseded", "revoked"],
       channel_status: ["connected", "disconnected", "error", "paused"],
       channel_strategy: ["round_robin", "specific"],
       conversation_status: [
