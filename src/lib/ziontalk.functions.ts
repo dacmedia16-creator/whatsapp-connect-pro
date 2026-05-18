@@ -279,13 +279,24 @@ export const processQueueFn = createServerFn({ method: "POST" })
         continue;
       }
       if (ch.status === "paused") {
-        skipped++;
+        await supabaseAdmin
+          .from("message_queue")
+          .update({ status: "pending", scheduled_for: new Date(Date.now() + 15 * 60 * 1000).toISOString() })
+          .eq("id", item.id);
+        rescheduled++;
         continue;
       }
       // daily limit check
       let sentToday = ch.sent_today_date === today ? ch.sent_today : 0;
       if (sentToday >= ch.daily_limit) {
-        skipped++;
+        const nextDay = new Date();
+        nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+        nextDay.setUTCHours(12, 0, 0, 0);
+        await supabaseAdmin
+          .from("message_queue")
+          .update({ status: "pending", scheduled_for: nextDay.toISOString() })
+          .eq("id", item.id);
+        rescheduled++;
         continue;
       }
       // business hours (tz-aware)
@@ -303,7 +314,11 @@ export const processQueueFn = createServerFn({ method: "POST" })
       const wd = wdNames[map.weekday] ?? 1;
       const hhmm = `${map.hour}:${map.minute}`;
       if (!days.includes(wd) || hhmm < start || hhmm > end) {
-        skipped++;
+        await supabaseAdmin
+          .from("message_queue")
+          .update({ status: "pending", scheduled_for: new Date(Date.now() + 30 * 60 * 1000).toISOString() })
+          .eq("id", item.id);
+        rescheduled++;
         continue;
       }
 
