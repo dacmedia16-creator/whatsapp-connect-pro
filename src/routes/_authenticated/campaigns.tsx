@@ -32,7 +32,7 @@ type Campaign = {
   id: string;
   name: string;
   description: string | null;
-  status: "draft" | "scheduled" | "running" | "paused" | "completed" | "canceled";
+  status: "draft" | "scheduled" | "running" | "paused" | "done";
   message_template: string;
   audience_filter: { tags?: string[] };
   channel_ids: string[];
@@ -47,8 +47,7 @@ const STATUS_LABELS: Record<Campaign["status"], { label: string; cls: string }> 
   scheduled: { label: "Agendada", cls: "border-gold text-gold" },
   running: { label: "Em execução", cls: "border-success text-success" },
   paused: { label: "Pausada", cls: "border-warning text-warning" },
-  completed: { label: "Concluída", cls: "border-primary text-primary" },
-  canceled: { label: "Cancelada", cls: "border-destructive text-destructive" },
+  done: { label: "Concluída", cls: "border-primary text-primary" },
 };
 
 function CampaignsPage() {
