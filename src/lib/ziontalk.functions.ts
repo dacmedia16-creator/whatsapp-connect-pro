@@ -187,7 +187,7 @@ export const testChannelFn = createServerFn({ method: "POST" })
     const apiKey = await getChannelApiKey(channel.id);
     const res = await fetch("https://app.ziontalk.com/api/send_message/", {
       method: "POST",
-      headers: { Authorization: "Basic " + Buffer.from(`${apiKey}:`).toString("base64") },
+      headers: { Authorization: "Basic " + Buffer.from(`${apiKey.trim()}:`).toString("base64") },
       body: form,
     });
     const text = await res.text();
