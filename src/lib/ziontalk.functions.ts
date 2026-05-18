@@ -503,9 +503,21 @@ export const enqueueCampaignFn = createServerFn({ method: "POST" })
       return { enqueued: 0, message: "Nenhum contato elegível" };
     }
 
-    // Resolve channels
-    const channelIds = (campaign.channel_ids as string[]) ?? [];
-    let channelsQ = supabaseAdmin.from("channels").select("id, daily_limit").neq("status", "paused");
+    // Lê configurações por campanha (canais, rotação, delays, janela).
+    const { data: settings } = await supabaseAdmin
+      .from("campaign_send_settings")
+      .select("*")
+      .eq("campaign_id", campaign.id)
+      .maybeSingle();
+
+    // Resolve canais: settings > campaign.channel_ids > todos não pausados.
+    const settingsChannelIds = (settings?.selected_channel_ids ?? []) as string[];
+    const campaignChannelIds = (campaign.channel_ids as string[]) ?? [];
+    const channelIds = settingsChannelIds.length ? settingsChannelIds : campaignChannelIds;
+    let channelsQ = supabaseAdmin
+      .from("channels")
+      .select("id, daily_limit, sent_today, sent_today_date")
+      .neq("status", "paused");
     if (channelIds.length) channelsQ = channelsQ.in("id", channelIds);
     const { data: channels } = await channelsQ;
     if (!channels || !channels.length) throw new Error("Nenhum canal disponível");
@@ -526,13 +538,40 @@ export const enqueueCampaignFn = createServerFn({ method: "POST" })
       .eq("campaign_id", campaign.id)
       .eq("status", "queued");
 
-    // Build queue with round-robin channel and stagger by rate_per_min
-    const ratePerMin = Math.max(1, campaign.rate_per_min || 20);
+    // Distribuição inicial conforme settings (rotação + delays).
     const startAt = campaign.scheduled_at ? new Date(campaign.scheduled_at).getTime() : Date.now();
     const contactMap = new Map(contacts.map((c) => [c.id, c]));
+    const today = new Date().toISOString().slice(0, 10);
+    const rotationMode = (settings?.rotation_mode ?? "round_robin") as string;
+    const priority = (settings?.channel_priority ?? []) as string[];
+    const delaySeconds = Math.max(0, settings?.delay_seconds ?? Math.floor(60 / Math.max(1, campaign.rate_per_min || 20)));
+    const jitterMin = settings?.random_delay_min ?? 0;
+    const jitterMax = settings?.random_delay_max ?? 0;
+    // contador local de uso por canal para least_used
+    const localUsage = new Map<string, number>(
+      channels.map((c) => [c.id, c.sent_today_date === today ? (c.sent_today ?? 0) : 0]),
+    );
+    const orderedPriority = priority.filter((id) => channels.some((c) => c.id === id));
+
+    function pickInitialChannel(idx: number): { id: string } {
+      if (rotationMode === "manual_priority" && orderedPriority.length) {
+        return { id: orderedPriority[0] };
+      }
+      if (rotationMode === "least_used") {
+        let best = channels[0];
+        let bestUsed = localUsage.get(best.id) ?? 0;
+        for (const c of channels) {
+          const u = localUsage.get(c.id) ?? 0;
+          if (u < bestUsed) { best = c; bestUsed = u; }
+        }
+        localUsage.set(best.id, bestUsed + 1);
+        return { id: best.id };
+      }
+      return { id: channels[idx % channels.length].id };
+    }
 
     const queueRows = (recs ?? []).map((r, idx) => {
-      const ch = channels[idx % channels.length];
+      const ch = pickInitialChannel(idx);
       const contact = contactMap.get(r.contact_id)!;
       const vars: Record<string, string> = {
         nome: contact.name,
@@ -542,7 +581,11 @@ export const enqueueCampaignFn = createServerFn({ method: "POST" })
         /\{\{\s*([\w.]+)\s*\}\}/g,
         (_: string, k: string) => vars[k] ?? "",
       );
-      const scheduledFor = new Date(startAt + (idx * 60_000) / ratePerMin);
+      const baseOffsetMs = idx * delaySeconds * 1000;
+      const jitterMs = jitterMax > jitterMin
+        ? Math.floor((jitterMin + Math.random() * (jitterMax - jitterMin)) * 1000)
+        : (jitterMin ? jitterMin * 1000 : 0);
+      const scheduledFor = new Date(startAt + baseOffsetMs + jitterMs);
       return {
         campaign_recipient_id: r.id,
         contact_id: r.contact_id,
