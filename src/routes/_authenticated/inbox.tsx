@@ -13,7 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { useAuth } from "@/hooks/use-auth";
-import { Search, Send, StickyNote, MessageSquareText, Ban, Inbox as InboxIcon, Loader2 } from "lucide-react";
+import { Search, Send, StickyNote, MessageSquareText, Ban, Inbox as InboxIcon, Loader2, ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 import { sendMessageFn } from "@/lib/ziontalk.functions";
 import { assignConversationFn, updateConversationStatusFn, addInternalNoteFn, markConversationReadFn } from "@/lib/inbox.functions";
@@ -117,7 +117,12 @@ function InboxPage() {
       </div>
       <div className="flex-1 flex min-h-0 border-t">
         {/* Lista */}
-        <aside className="w-80 border-r flex flex-col min-h-0 bg-card/30">
+        <aside
+          className={cn(
+            "w-full md:w-80 border-r md:flex flex-col min-h-0 bg-card/30",
+            selected ? "hidden md:flex" : "flex",
+          )}
+        >
           <div className="p-3 space-y-2 border-b">
             <div className="relative">
               <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -182,9 +187,20 @@ function InboxPage() {
         </aside>
 
         {/* Central */}
-        <main className="flex-1 flex flex-col min-w-0 min-h-0">
+        <main
+          className={cn(
+            "flex-1 flex-col min-w-0 min-h-0",
+            selected ? "flex" : "hidden md:flex",
+          )}
+        >
           {selected ? (
-            <ConversationPanel key={selected.id} conv={selected} currentUserId={user?.id ?? null} role={role} />
+            <ConversationPanel
+              key={selected.id}
+              conv={selected}
+              currentUserId={user?.id ?? null}
+              role={role}
+              onBack={() => setSelectedId(null)}
+            />
           ) : (
             <div className="flex-1 flex items-center justify-center text-center text-muted-foreground">
               <div>
@@ -199,7 +215,7 @@ function InboxPage() {
   );
 }
 
-function ConversationPanel({ conv, currentUserId, role }: { conv: any; currentUserId: string | null; role: string | null }) {
+function ConversationPanel({ conv, currentUserId, role, onBack }: { conv: any; currentUserId: string | null; role: string | null; onBack: () => void }) {
   const qc = useQueryClient();
   const send = useServerFn(sendMessageFn);
   const note = useServerFn(addInternalNoteFn);
@@ -293,9 +309,20 @@ function ConversationPanel({ conv, currentUserId, role }: { conv: any; currentUs
       {/* Mensagens + composer */}
       <section className="flex-1 flex flex-col min-w-0 min-h-0">
         <header className="border-b px-4 py-3 flex items-center justify-between gap-3 bg-card/30">
-          <div className="min-w-0">
-            <p className="font-medium truncate">{conv.contact?.name ?? "—"}</p>
-            <p className="text-xs text-muted-foreground">{conv.contact?.phone_e164 ? formatPhone(conv.contact.phone_e164) : ""}</p>
+          <div className="flex items-center gap-2 min-w-0">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="md:hidden h-8 w-8 shrink-0"
+              onClick={onBack}
+              aria-label="Voltar"
+            >
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+            <div className="min-w-0">
+              <p className="font-medium truncate">{conv.contact?.name ?? "—"}</p>
+              <p className="text-xs text-muted-foreground">{conv.contact?.phone_e164 ? formatPhone(conv.contact.phone_e164) : ""}</p>
+            </div>
           </div>
           <div className="flex items-center gap-2 flex-wrap justify-end">
             <Select value={conv.status} onValueChange={(v) => statusMut.mutate(v)}>
