@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { supabase } from "@/integrations/supabase/client";
@@ -13,7 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { useAuth } from "@/hooks/use-auth";
-import { Search, Send, StickyNote, MessageSquareText, Ban, Inbox as InboxIcon, Loader2, ArrowLeft } from "lucide-react";
+import { Search, Send, StickyNote, MessageSquareText, Ban, Inbox as InboxIcon, Loader2, ArrowLeft, ArrowDown } from "lucide-react";
 import { toast } from "sonner";
 import { sendMessageFn } from "@/lib/ziontalk.functions";
 import { assignConversationFn, updateConversationStatusFn, addInternalNoteFn, markConversationReadFn } from "@/lib/inbox.functions";
@@ -331,6 +331,54 @@ function ConversationPanel({ conv, currentUserId, role, onBack }: { conv: any; c
   const optedOut = !!conv.contact?.opt_out_at;
   const noConsent = !conv.contact?.consent;
 
+  // Auto-scroll: keep last message visible
+  const scrollAreaRef = useRef<HTMLDivElement | null>(null);
+  const [showJump, setShowJump] = useState(false);
+  const nearBottomRef = useRef(true);
+
+  const getViewport = () =>
+    scrollAreaRef.current?.querySelector<HTMLDivElement>("[data-radix-scroll-area-viewport]") ?? null;
+
+  const scrollToBottom = (behavior: ScrollBehavior = "auto") => {
+    const vp = getViewport();
+    if (!vp) return;
+    vp.scrollTo({ top: vp.scrollHeight, behavior });
+    setShowJump(false);
+    nearBottomRef.current = true;
+  };
+
+  // Track if user is near the bottom
+  useEffect(() => {
+    const vp = getViewport();
+    if (!vp) return;
+    const onScroll = () => {
+      const distance = vp.scrollHeight - vp.scrollTop - vp.clientHeight;
+      nearBottomRef.current = distance < 120;
+      if (nearBottomRef.current) setShowJump(false);
+    };
+    vp.addEventListener("scroll", onScroll, { passive: true });
+    return () => vp.removeEventListener("scroll", onScroll);
+  }, [conv.id]);
+
+  // Snap to bottom when conversation opens
+  useEffect(() => {
+    // wait for messages to render
+    const t = setTimeout(() => scrollToBottom("auto"), 50);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conv.id]);
+
+  // On new messages: scroll if near bottom, else show jump button
+  useEffect(() => {
+    if (messages.length === 0) return;
+    if (nearBottomRef.current) {
+      requestAnimationFrame(() => scrollToBottom("smooth"));
+    } else {
+      setShowJump(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages.length]);
+
   return (
     <div className="flex-1 flex min-h-0">
       {/* Mensagens + composer */}
@@ -378,16 +426,26 @@ function ConversationPanel({ conv, currentUserId, role, onBack }: { conv: any; c
           </div>
         </header>
 
-        <ScrollArea className="flex-1 p-4">
-          {messages.length === 0 && (
-            <p className="text-center text-sm text-muted-foreground py-8">Nenhuma mensagem ainda.</p>
+        <div className="relative flex-1 min-h-0">
+          <ScrollArea ref={scrollAreaRef} className="h-full p-4">
+            {messages.length === 0 && (
+              <p className="text-center text-sm text-muted-foreground py-8">Nenhuma mensagem ainda.</p>
+            )}
+            <div className="space-y-2 max-w-3xl mx-auto">
+              {messages.map((m: any) => (
+                <MessageBubble key={m.id} m={m} mine={m.created_by === currentUserId} />
+              ))}
+            </div>
+          </ScrollArea>
+          {showJump && (
+            <button
+              onClick={() => scrollToBottom("smooth")}
+              className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-primary text-primary-foreground text-xs shadow-lg hover:opacity-90"
+            >
+              <ArrowDown className="h-3 w-3" /> Novas mensagens
+            </button>
           )}
-          <div className="space-y-2 max-w-3xl mx-auto">
-            {messages.map((m: any) => (
-              <MessageBubble key={m.id} m={m} mine={m.created_by === currentUserId} />
-            ))}
-          </div>
-        </ScrollArea>
+        </div>
 
         <div className="border-t p-3 bg-card/30">
           {(optedOut || noConsent) && mode === "reply" && (
