@@ -622,6 +622,7 @@ export type Database = {
         }
         Returns: boolean
       }
+      unaccent_safe: { Args: { txt: string }; Returns: string }
     }
     Enums: {
       app_role: "admin" | "gestor" | "atendente"
