@@ -83,7 +83,7 @@ export const sendMessageFn = createServerFn({ method: "POST" })
     }
 
     const result = await zionSendMessage({
-      apiKey: channel.zion_api_key,
+      apiKey: await getChannelApiKey(channel.id),
       phone: contact.phone_e164,
       msg: data.message,
     });
@@ -184,9 +184,10 @@ export const testChannelFn = createServerFn({ method: "POST" })
     const form = new FormData();
     form.append("msg", "__test__");
     form.append("mobile_phone", "+0000000000");
+    const apiKey = await getChannelApiKey(channel.id);
     const res = await fetch("https://app.ziontalk.com/api/send_message/", {
       method: "POST",
-      headers: { Authorization: "Basic " + Buffer.from(`${channel.zion_api_key}:`).toString("base64") },
+      headers: { Authorization: "Basic " + Buffer.from(`${apiKey}:`).toString("base64") },
       body: form,
     });
     const text = await res.text();
@@ -284,7 +285,7 @@ export const processQueueFn = createServerFn({ method: "POST" })
         .eq("id", item.id);
 
       const result = await zionSendMessage({
-        apiKey: ch.zion_api_key,
+        apiKey: await getChannelApiKey(ch.id),
         phone: ct.phone_e164,
         msg: item.rendered_text,
       });
