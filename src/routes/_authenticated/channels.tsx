@@ -23,7 +23,6 @@ import { toast } from "sonner";
 import { normalizePhoneE164, formatPhone } from "@/lib/phone";
 import { testChannelFn } from "@/lib/ziontalk.functions";
 import { createChannelFn } from "@/lib/channels.functions";
-import { useServerFn } from "@tanstack/react-start";
 
 export const Route = createFileRoute("/_authenticated/channels")({
   component: ChannelsPage,
