@@ -446,17 +446,24 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
                 </div>
                 <div className="space-y-1.5">
                   <Label>Canal *</Label>
-                  <Select value={channelId} onValueChange={setChannelId}>
-                    <SelectTrigger><SelectValue placeholder="Selecione um canal" /></SelectTrigger>
-                    <SelectContent>
-                      {channels.length === 0 && <div className="px-3 py-2 text-sm text-muted-foreground">Nenhum canal ativo</div>}
-                      {channels.map((c: any) => (
-                        <SelectItem key={c.id} value={c.id}>
-                          {c.label} <span className="text-muted-foreground text-xs ml-1">· {c.status}</span>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <div className="max-h-32 overflow-y-auto border rounded-md divide-y">
+                    {channels.length === 0 && (
+                      <div className="px-3 py-2 text-sm text-muted-foreground">Nenhum canal ativo</div>
+                    )}
+                    {channels.map((c: any) => {
+                      const checked = channelIds.includes(c.id);
+                      return (
+                        <label key={c.id} className="flex items-center gap-2 px-3 py-1.5 cursor-pointer hover:bg-muted/40 text-sm">
+                          <Checkbox checked={checked} onCheckedChange={(v) =>
+                            setChannelIds((prev) => v ? Array.from(new Set([...prev, c.id])) : prev.filter((x) => x !== c.id))
+                          } />
+                          <span className="truncate">{c.label}</span>
+                          <span className="text-muted-foreground text-xs ml-auto">{c.status}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">{channelIds.length} canal(is) selecionado(s)</p>
                 </div>
               </div>
 
@@ -661,39 +668,40 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
               </Card>
 
               <Card>
-                <CardContent className="p-4 space-y-3">
-                  <h3 className="font-medium text-sm">Configurações de envio</h3>
-                  <div className="grid md:grid-cols-2 gap-3">
-                    <div className="space-y-1.5">
-                      <Label>Velocidade (msg/min/canal)</Label>
-                      <Input type="number" min={1} max={120} value={ratePerMin} onChange={(e) => setRatePerMin(parseInt(e.target.value || "1", 10))} />
-                      <p className="text-[11px] text-muted-foreground">Intervalo aprox.: {(60 / Math.max(ratePerMin, 1)).toFixed(1)}s entre mensagens</p>
-                    </div>
-                    <div className="space-y-2 pt-5">
-                      <label className="flex items-center gap-2 text-sm"><Checkbox checked disabled /> Respeitar horário comercial do canal</label>
-                      <label className="flex items-center gap-2 text-sm"><Checkbox checked={autoPause} onCheckedChange={(v) => setAutoPause(!!v)} /> Pausar automaticamente em caso de muitos erros</label>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
                 <CardContent className="p-4 space-y-2 text-sm">
                   <h3 className="font-medium">Resumo final</h3>
                   <div className="grid md:grid-cols-2 gap-y-1 gap-x-4">
                     <p><span className="text-muted-foreground">Nome:</span> {name}</p>
-                    <p><span className="text-muted-foreground">Canal:</span> {channels.find((c: any) => c.id === channelId)?.label ?? "—"}</p>
+                    <p><span className="text-muted-foreground">Canais:</span> {channels.filter((c: any) => channelIds.includes(c.id)).map((c: any) => c.label).join(", ") || "—"}</p>
                     <p><span className="text-muted-foreground">Agendamento:</span> {scheduledAt ? format(new Date(scheduledAt), "dd/MM/yyyy HH:mm", { locale: ptBR }) : "Imediato"}</p>
                     <p><span className="text-muted-foreground">Método:</span> {method}</p>
                     <p className="text-success"><span className="text-muted-foreground">Elegíveis:</span> {summary.eligible}</p>
                     <p className="text-warning"><span className="text-muted-foreground">Bloqueados:</span> {summary.blockedOptOut + summary.blockedNoConsent + summary.invalidPhone + summary.duplicates}</p>
                   </div>
-                  <div className="pt-2">
-                    <label className="flex items-center gap-2 text-sm">
-                      <Checkbox checked={initiate} onCheckedChange={(v) => setInitiate(!!v)} />
-                      Iniciar/agendar imediatamente após criar (desmarque para salvar como rascunho)
-                    </label>
-                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
+          {step === 3 && (
+            <div className="space-y-5">
+              <SendSettingsForm
+                form={sendSettings}
+                onChange={setSendSettings}
+                channels={channels.filter((c: any) => channelIds.includes(c.id))}
+                showChannelSelection={false}
+              />
+              {settingsError && (
+                <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-xs text-destructive">
+                  ⚠ {settingsError}
+                </div>
+              )}
+              <Card>
+                <CardContent className="p-4 text-sm">
+                  <label className="flex items-center gap-2">
+                    <Checkbox checked={initiate} onCheckedChange={(v) => setInitiate(!!v)} />
+                    Iniciar/agendar imediatamente após criar (desmarque para salvar como rascunho)
+                  </label>
                 </CardContent>
               </Card>
             </div>
@@ -701,17 +709,21 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
         </div>
 
         <footer className="px-6 py-4 border-t flex items-center justify-between gap-3 bg-muted/10">
-          <span className="text-xs text-muted-foreground">Etapa {step} de 2</span>
+          <span className="text-xs text-muted-foreground">Etapa {step} de 3</span>
           <div className="flex gap-2">
             <Button variant="ghost" onClick={() => { setOpen(false); reset(); }}>Cancelar</Button>
-            {step === 2 && (
-              <Button variant="outline" onClick={() => setStep(1)}>
+            {step > 1 && (
+              <Button variant="outline" onClick={() => setStep((s) => (s === 3 ? 2 : 1))}>
                 <ArrowLeft className="h-4 w-4 mr-1" /> Voltar
               </Button>
             )}
-            {step === 1 ? (
+            {step === 1 && (
               <Button disabled={!canAdvance} onClick={() => setStep(2)}>Próxima</Button>
-            ) : (
+            )}
+            {step === 2 && (
+              <Button disabled={!canAdvanceFromStep2} onClick={() => setStep(3)}>Próxima</Button>
+            )}
+            {step === 3 && (
               <Button disabled={!canSubmit || submit.isPending} onClick={() => submit.mutate()}>
                 {!initiate ? "Salvar rascunho" : scheduledAt ? "Agendar campanha" : "Iniciar campanha"}
               </Button>
