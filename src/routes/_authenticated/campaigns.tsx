@@ -152,7 +152,8 @@ function CampaignWizard({ onDone }: { onDone: () => void }) {
   const [step, setStep] = useState(1);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [template, setTemplate] = useState("Olá {{nome}}, ");
+  const OPT_OUT_FOOTER = "\n\nResponda SAIR para não receber mais mensagens.";
+  const [template, setTemplate] = useState("Olá {{nome}}, " + OPT_OUT_FOOTER);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [selectedChannels, setSelectedChannels] = useState<string[]>([]);
   const [ratePerMin, setRatePerMin] = useState(20);
@@ -160,7 +161,7 @@ function CampaignWizard({ onDone }: { onDone: () => void }) {
   const [scheduledAt, setScheduledAt] = useState<string>("");
 
   const reset = () => {
-    setStep(1); setName(""); setDescription(""); setTemplate("Olá {{nome}}, ");
+    setStep(1); setName(""); setDescription(""); setTemplate("Olá {{nome}}, " + OPT_OUT_FOOTER);
     setSelectedTags([]); setSelectedChannels([]); setRatePerMin(20);
     setScheduleNow(true); setScheduledAt("");
   };
@@ -209,10 +210,13 @@ function CampaignWizard({ onDone }: { onDone: () => void }) {
       if (template.trim().length < 5) throw new Error("Mensagem muito curta");
       if (!selectedChannels.length) throw new Error("Selecione ao menos um canal");
       if (!scheduleNow && !scheduledAt) throw new Error("Defina a data de agendamento");
+      const finalTemplate = /sair|descadastr|parar|remover/i.test(template)
+        ? template
+        : template.trimEnd() + OPT_OUT_FOOTER;
       const payload = {
         name: name.trim(),
         description: description.trim() || null,
-        message_template: template,
+        message_template: finalTemplate,
         audience_filter: { tags: selectedTags },
         channel_ids: selectedChannels,
         rate_per_min: ratePerMin,
@@ -269,6 +273,9 @@ function CampaignWizard({ onDone }: { onDone: () => void }) {
                 />
                 <p className="text-xs text-muted-foreground">
                   Variáveis: <code>{`{{nome}}`}</code> e quaisquer chaves de <em>custom_fields</em>.
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Um rodapé de descadastro (<em>“Responda SAIR…”</em>) é adicionado automaticamente quando não houver palavra de opt-out no texto.
                 </p>
               </div>
             </div>

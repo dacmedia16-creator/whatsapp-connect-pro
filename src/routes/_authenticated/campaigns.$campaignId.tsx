@@ -20,6 +20,10 @@ import { enqueueCampaignFn, processQueueFn } from "@/lib/ziontalk.functions";
 import { formatPhone } from "@/lib/phone";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 
 export const Route = createFileRoute("/_authenticated/campaigns/$campaignId")({
   component: CampaignDetail,
@@ -199,9 +203,42 @@ function CampaignDetail() {
                   {live ? "Ao vivo" : "Offline"}
                 </Badge>
                 {(campaign.status === "draft" || campaign.status === "scheduled") && (
-                  <Button onClick={() => startMut.mutate()} disabled={startMut.isPending}>
-                    <Play className="h-4 w-4 mr-1" /> Iniciar envio
-                  </Button>
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button disabled={startMut.isPending}>
+                        <Play className="h-4 w-4 mr-1" /> Iniciar envio
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Confirmar início da campanha</AlertDialogTitle>
+                        <AlertDialogDescription asChild>
+                          <div className="space-y-2 text-sm">
+                            <p>
+                              Você está prestes a enfileirar mensagens para
+                              <strong> {campaign.total_recipients || stats?.total || 0} </strong>
+                              destinatário(s).
+                            </p>
+                            <ul className="list-disc pl-5 text-muted-foreground">
+                              <li>Apenas contatos com <strong>consentimento</strong> ativo serão incluídos.</li>
+                              <li>Contatos com <strong>opt-out</strong> são automaticamente excluídos.</li>
+                              <li>Envios respeitam o horário comercial e o limite diário de cada canal.</li>
+                              <li>O rodapé de descadastro é incluído automaticamente na mensagem.</li>
+                            </ul>
+                            <p className="text-xs text-muted-foreground">
+                              Esta ação pode gerar custos no provedor ZionTalk. Confirme antes de prosseguir.
+                            </p>
+                          </div>
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                        <AlertDialogAction onClick={() => startMut.mutate()}>
+                          Confirmar e iniciar
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
                 )}
                 {campaign.status === "running" && (
                   <>
