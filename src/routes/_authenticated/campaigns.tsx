@@ -317,8 +317,14 @@ function CampaignWizard({ onDone }: { onDone: () => void }) {
                   })}
                 </div>
               </div>
-              <div className="rounded-md border p-3 bg-muted/30 text-sm">
-                Público estimado: <strong>{audienceCount ?? "…"}</strong> contato(s) elegível(is)
+              <div className="rounded-md border p-3 bg-muted/30 text-sm space-y-1">
+                <p>Resumo de público:</p>
+                <ul className="text-xs space-y-0.5">
+                  <li className="text-success">✓ Elegíveis: <strong>{preview?.eligible ?? audienceCount ?? "…"}</strong></li>
+                  <li className="text-warning">⚠ Bloqueados por opt-out: <strong>{preview?.blockedOptOut ?? "…"}</strong></li>
+                  <li className="text-muted-foreground">⊘ Sem consentimento: <strong>{preview?.blockedConsent ?? "…"}</strong></li>
+                </ul>
+                <p className="text-[11px] text-muted-foreground pt-1">Apenas os elegíveis serão enfileirados.</p>
               </div>
             </div>
           )}
@@ -390,7 +396,8 @@ function CampaignWizard({ onDone }: { onDone: () => void }) {
               <div className="rounded-md border p-3 bg-muted/30 text-sm space-y-1">
                 <p><strong>Resumo</strong></p>
                 <p>Nome: {name || "—"}</p>
-                <p>Público estimado: {audienceCount ?? "—"} contato(s)</p>
+                <p>Elegíveis: {preview?.eligible ?? audienceCount ?? "—"}</p>
+                <p>Bloqueados (opt-out / sem consent): {(preview?.blockedOptOut ?? 0) + (preview?.blockedConsent ?? 0)}</p>
                 <p>Canais: {selectedChannels.length}</p>
                 <p>Velocidade: {ratePerMin} msg/min/canal</p>
                 <p>Envio: {scheduleNow ? "imediato" : scheduledAt || "—"}</p>
