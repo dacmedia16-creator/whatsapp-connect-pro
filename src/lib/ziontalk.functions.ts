@@ -322,13 +322,37 @@ export const processQueueFn = createServerFn({ method: "POST" })
         continue;
       }
 
+      const attempts = (item.attempts ?? 0) + 1;
       await supabaseAdmin
         .from("message_queue")
-        .update({ status: "processing", attempts: item.attempts + 1 })
+        .update({ status: "processing", attempts })
         .eq("id", item.id);
 
+      let apiKey: string;
+      try {
+        apiKey = await getChannelApiKey(ch.id);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Chave da Ziontalk indisponível";
+        await supabaseAdmin
+          .from("message_queue")
+          .update({ status: "failed", last_error: message })
+          .eq("id", item.id);
+        if (item.campaign_recipient_id) {
+          await supabaseAdmin
+            .from("campaign_recipients")
+            .update({ status: "failed", error: message })
+            .eq("id", item.campaign_recipient_id);
+        }
+        await supabaseAdmin
+          .from("channels")
+          .update({ status: "error", last_error: message })
+          .eq("id", ch.id);
+        failed++;
+        continue;
+      }
+
       const result = await zionSendMessage({
-        apiKey: await getChannelApiKey(ch.id),
+        apiKey,
         phone: ct.phone_e164,
         msg: item.rendered_text,
       });
