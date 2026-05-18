@@ -24,6 +24,7 @@ import { Route as AuthenticatedCampaignsIndexRouteImport } from './routes/_authe
 import { Route as AuthenticatedCampaignsCampaignIdRouteImport } from './routes/_authenticated/campaigns.$campaignId'
 import { Route as ApiPublicWebhooksZiontalkRouteImport } from './routes/api/public/webhooks/ziontalk'
 import { Route as ApiPublicHooksProcessQueueRouteImport } from './routes/api/public/hooks/process-queue'
+import { Route as AuthenticatedCampaignsCampaignIdSettingsRouteImport } from './routes/_authenticated/campaigns.$campaignId.settings'
 
 const SignupRoute = SignupRouteImport.update({
   id: '/signup',
@@ -104,6 +105,12 @@ const ApiPublicHooksProcessQueueRoute =
     path: '/api/public/hooks/process-queue',
     getParentRoute: () => rootRouteImport,
   } as any)
+const AuthenticatedCampaignsCampaignIdSettingsRoute =
+  AuthenticatedCampaignsCampaignIdSettingsRouteImport.update({
+    id: '/settings',
+    path: '/settings',
+    getParentRoute: () => AuthenticatedCampaignsCampaignIdRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -116,8 +123,9 @@ export interface FileRoutesByFullPath {
   '/reports': typeof AuthenticatedReportsRoute
   '/sending-panel': typeof AuthenticatedSendingPanelRoute
   '/settings': typeof AuthenticatedSettingsRoute
-  '/campaigns/$campaignId': typeof AuthenticatedCampaignsCampaignIdRoute
+  '/campaigns/$campaignId': typeof AuthenticatedCampaignsCampaignIdRouteWithChildren
   '/campaigns/': typeof AuthenticatedCampaignsIndexRoute
+  '/campaigns/$campaignId/settings': typeof AuthenticatedCampaignsCampaignIdSettingsRoute
   '/api/public/hooks/process-queue': typeof ApiPublicHooksProcessQueueRoute
   '/api/public/webhooks/ziontalk': typeof ApiPublicWebhooksZiontalkRoute
 }
@@ -132,8 +140,9 @@ export interface FileRoutesByTo {
   '/reports': typeof AuthenticatedReportsRoute
   '/sending-panel': typeof AuthenticatedSendingPanelRoute
   '/settings': typeof AuthenticatedSettingsRoute
-  '/campaigns/$campaignId': typeof AuthenticatedCampaignsCampaignIdRoute
+  '/campaigns/$campaignId': typeof AuthenticatedCampaignsCampaignIdRouteWithChildren
   '/campaigns': typeof AuthenticatedCampaignsIndexRoute
+  '/campaigns/$campaignId/settings': typeof AuthenticatedCampaignsCampaignIdSettingsRoute
   '/api/public/hooks/process-queue': typeof ApiPublicHooksProcessQueueRoute
   '/api/public/webhooks/ziontalk': typeof ApiPublicWebhooksZiontalkRoute
 }
@@ -150,8 +159,9 @@ export interface FileRoutesById {
   '/_authenticated/reports': typeof AuthenticatedReportsRoute
   '/_authenticated/sending-panel': typeof AuthenticatedSendingPanelRoute
   '/_authenticated/settings': typeof AuthenticatedSettingsRoute
-  '/_authenticated/campaigns/$campaignId': typeof AuthenticatedCampaignsCampaignIdRoute
+  '/_authenticated/campaigns/$campaignId': typeof AuthenticatedCampaignsCampaignIdRouteWithChildren
   '/_authenticated/campaigns/': typeof AuthenticatedCampaignsIndexRoute
+  '/_authenticated/campaigns/$campaignId/settings': typeof AuthenticatedCampaignsCampaignIdSettingsRoute
   '/api/public/hooks/process-queue': typeof ApiPublicHooksProcessQueueRoute
   '/api/public/webhooks/ziontalk': typeof ApiPublicWebhooksZiontalkRoute
 }
@@ -170,6 +180,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/campaigns/$campaignId'
     | '/campaigns/'
+    | '/campaigns/$campaignId/settings'
     | '/api/public/hooks/process-queue'
     | '/api/public/webhooks/ziontalk'
   fileRoutesByTo: FileRoutesByTo
@@ -186,6 +197,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/campaigns/$campaignId'
     | '/campaigns'
+    | '/campaigns/$campaignId/settings'
     | '/api/public/hooks/process-queue'
     | '/api/public/webhooks/ziontalk'
   id:
@@ -203,6 +215,7 @@ export interface FileRouteTypes {
     | '/_authenticated/settings'
     | '/_authenticated/campaigns/$campaignId'
     | '/_authenticated/campaigns/'
+    | '/_authenticated/campaigns/$campaignId/settings'
     | '/api/public/hooks/process-queue'
     | '/api/public/webhooks/ziontalk'
   fileRoutesById: FileRoutesById
@@ -323,8 +336,30 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicHooksProcessQueueRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_authenticated/campaigns/$campaignId/settings': {
+      id: '/_authenticated/campaigns/$campaignId/settings'
+      path: '/settings'
+      fullPath: '/campaigns/$campaignId/settings'
+      preLoaderRoute: typeof AuthenticatedCampaignsCampaignIdSettingsRouteImport
+      parentRoute: typeof AuthenticatedCampaignsCampaignIdRoute
+    }
   }
 }
+
+interface AuthenticatedCampaignsCampaignIdRouteChildren {
+  AuthenticatedCampaignsCampaignIdSettingsRoute: typeof AuthenticatedCampaignsCampaignIdSettingsRoute
+}
+
+const AuthenticatedCampaignsCampaignIdRouteChildren: AuthenticatedCampaignsCampaignIdRouteChildren =
+  {
+    AuthenticatedCampaignsCampaignIdSettingsRoute:
+      AuthenticatedCampaignsCampaignIdSettingsRoute,
+  }
+
+const AuthenticatedCampaignsCampaignIdRouteWithChildren =
+  AuthenticatedCampaignsCampaignIdRoute._addFileChildren(
+    AuthenticatedCampaignsCampaignIdRouteChildren,
+  )
 
 interface AuthenticatedRouteChildren {
   AuthenticatedChannelsRoute: typeof AuthenticatedChannelsRoute
@@ -334,7 +369,7 @@ interface AuthenticatedRouteChildren {
   AuthenticatedReportsRoute: typeof AuthenticatedReportsRoute
   AuthenticatedSendingPanelRoute: typeof AuthenticatedSendingPanelRoute
   AuthenticatedSettingsRoute: typeof AuthenticatedSettingsRoute
-  AuthenticatedCampaignsCampaignIdRoute: typeof AuthenticatedCampaignsCampaignIdRoute
+  AuthenticatedCampaignsCampaignIdRoute: typeof AuthenticatedCampaignsCampaignIdRouteWithChildren
   AuthenticatedCampaignsIndexRoute: typeof AuthenticatedCampaignsIndexRoute
 }
 
@@ -346,7 +381,8 @@ const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedReportsRoute: AuthenticatedReportsRoute,
   AuthenticatedSendingPanelRoute: AuthenticatedSendingPanelRoute,
   AuthenticatedSettingsRoute: AuthenticatedSettingsRoute,
-  AuthenticatedCampaignsCampaignIdRoute: AuthenticatedCampaignsCampaignIdRoute,
+  AuthenticatedCampaignsCampaignIdRoute:
+    AuthenticatedCampaignsCampaignIdRouteWithChildren,
   AuthenticatedCampaignsIndexRoute: AuthenticatedCampaignsIndexRoute,
 }
 

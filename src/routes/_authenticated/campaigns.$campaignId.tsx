@@ -12,7 +12,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { useAuth } from "@/hooks/use-auth";
-import { ArrowLeft, Play, Pause, Send, Square, RefreshCw, Radio, Inbox, CheckCircle2, XCircle, Ban, Truck, ChevronLeft, ChevronRight } from "lucide-react";
+import { ArrowLeft, Play, Pause, Send, Square, RefreshCw, Radio, Inbox, CheckCircle2, XCircle, Ban, Truck, ChevronLeft, ChevronRight, Settings } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -212,6 +212,11 @@ function CampaignDetail() {
                   <Radio className={`h-3 w-3 ${live ? "animate-pulse" : ""}`} />
                   {live ? "Ao vivo" : "Offline"}
                 </Badge>
+                <Button asChild variant="outline">
+                  <Link to="/campaigns/$campaignId/settings" params={{ campaignId: campaign.id }}>
+                    <Settings className="h-4 w-4 mr-1" /> Configurar envios
+                  </Link>
+                </Button>
                 {(campaign.status === "draft" || campaign.status === "scheduled") && (
                   <AlertDialog>
                     <AlertDialogTrigger asChild>
