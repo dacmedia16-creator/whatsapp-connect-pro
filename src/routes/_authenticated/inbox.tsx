@@ -83,6 +83,8 @@ function InboxPage() {
       if (error) throw error;
       return data ?? [];
     },
+    refetchInterval: 5000,
+    refetchIntervalInBackground: true,
   });
 
   const filtered = useMemo(() => {
