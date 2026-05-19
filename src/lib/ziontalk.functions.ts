@@ -252,19 +252,19 @@ export const processQueueFn = createServerFn({ method: "POST" })
       throw new Error("Sem permissão");
     }
 
-    const today = new Date().toISOString().slice(0, 10);
     const nowIso = new Date().toISOString();
 
-    // Pull up to 50 pending items due now
-    const { data: items } = await supabaseAdmin
+    // Claim atômico até 50 pending vencidos (mesmo padrão do cron).
+    const { data: claimed } = await supabaseAdmin
       .from("message_queue")
-      .select("*, channel:channels(*), contact:contacts(*)")
-      .eq("status", "pending")
+      .update({ status: "processing" })
       .lte("scheduled_for", nowIso)
-      .order("scheduled_for", { ascending: true })
+      .eq("status", "pending")
+      .select("id")
       .limit(50);
 
-    if (!items?.length) {
+    const ids = (claimed ?? []).map((r: any) => r.id);
+    if (!ids.length) {
       const { data: nextItem } = await supabaseAdmin
         .from("message_queue")
         .select("scheduled_for, last_error")
@@ -286,182 +286,23 @@ export const processQueueFn = createServerFn({ method: "POST" })
       };
     }
 
+    const { data: items } = await supabaseAdmin
+      .from("message_queue")
+      .select("*, channel:channels(*), contact:contacts(*), recipient:campaign_recipients(id, campaign_id)")
+      .in("id", ids);
+
+    const ctx = createSenderContext(process.env.CHANNEL_KEY_SECRET);
     let sent = 0;
     let failed = 0;
     let skipped = 0;
     let rescheduled = 0;
 
     for (const item of items ?? []) {
-      const ch = item.channel as any;
-      const ct = item.contact as any;
-      if (!ch || !ct) {
-        await supabaseAdmin
-          .from("message_queue")
-          .update({ status: "failed", last_error: "Canal ou contato ausente" })
-          .eq("id", item.id);
-        failed++;
-        continue;
-      }
-      if (ct.opt_out_at || !ct.consent) {
-        await supabaseAdmin
-          .from("message_queue")
-          .update({ status: "failed", last_error: "Sem consentimento" })
-          .eq("id", item.id);
-        if (item.campaign_recipient_id) {
-          await supabaseAdmin
-            .from("campaign_recipients")
-            .update({ status: "opted_out" })
-            .eq("id", item.campaign_recipient_id);
-        }
-        skipped++;
-        continue;
-      }
-      if (ch.status === "paused") {
-        await supabaseAdmin
-          .from("message_queue")
-          .update({ status: "pending", scheduled_for: new Date(Date.now() + 15 * 60 * 1000).toISOString() })
-          .eq("id", item.id);
-        rescheduled++;
-        continue;
-      }
-      // daily limit check
-      let sentToday = ch.sent_today_date === today ? ch.sent_today : 0;
-      if (sentToday >= ch.daily_limit) {
-        const nextDay = new Date();
-        nextDay.setUTCDate(nextDay.getUTCDate() + 1);
-        nextDay.setUTCHours(12, 0, 0, 0);
-        await supabaseAdmin
-          .from("message_queue")
-          .update({ status: "pending", scheduled_for: nextDay.toISOString() })
-          .eq("id", item.id);
-        rescheduled++;
-        continue;
-      }
-      const bh = getBusinessHoursWindow(ch.business_hours);
-      if (!bh.ok) {
-        await supabaseAdmin
-          .from("message_queue")
-          .update({
-            status: "pending",
-            scheduled_for: (bh.nextWindow ?? new Date(Date.now() + 60 * 60 * 1000)).toISOString(),
-            last_error: "Envio adiado por horário comercial",
-          })
-          .eq("id", item.id);
-        rescheduled++;
-        continue;
-      }
-
-      const attempts = (item.attempts ?? 0) + 1;
-      await supabaseAdmin
-        .from("message_queue")
-        .update({ status: "processing", attempts })
-        .eq("id", item.id);
-
-      let apiKey: string;
-      try {
-        apiKey = await getChannelApiKey(ch.id);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Chave da Ziontalk indisponível";
-        await supabaseAdmin
-          .from("message_queue")
-          .update({ status: "failed", last_error: message })
-          .eq("id", item.id);
-        if (item.campaign_recipient_id) {
-          await supabaseAdmin
-            .from("campaign_recipients")
-            .update({ status: "failed", error: message })
-            .eq("id", item.campaign_recipient_id);
-        }
-        await supabaseAdmin
-          .from("channels")
-          .update({ status: "error", last_error: message })
-          .eq("id", ch.id);
-        failed++;
-        continue;
-      }
-
-      const result = await zionSendMessage({
-        apiKey,
-        phone: ct.phone_e164,
-        msg: item.rendered_text,
-      });
-
-      await logSend({
-        channel_id: ch.id,
-        contact_id: ct.id,
-        campaign_id: null,
-        http_status: result.status,
-        response_text: result.body.slice(0, 2000),
-      });
-
-      if (result.ok) {
-        sent++;
-        await supabaseAdmin
-          .from("message_queue")
-          .update({ status: "sent", processed_at: new Date().toISOString() })
-          .eq("id", item.id);
-        await supabaseAdmin
-          .from("channels")
-          .update({
-            status: "connected",
-            sent_today: sentToday + 1,
-            sent_today_date: today,
-            last_error: null,
-          })
-          .eq("id", ch.id);
-        if (item.campaign_recipient_id) {
-          await supabaseAdmin
-            .from("campaign_recipients")
-            .update({ status: "sent", sent_at: new Date().toISOString(), channel_id: ch.id })
-            .eq("id", item.campaign_recipient_id);
-        }
-
-        // Ensure conversation + message
-        const { data: existing } = await supabaseAdmin
-          .from("conversations")
-          .select("id")
-          .eq("contact_id", ct.id)
-          .eq("channel_id", ch.id)
-          .maybeSingle();
-        let convId = existing?.id;
-        if (!convId) {
-          const { data: newConv } = await supabaseAdmin
-            .from("conversations")
-            .insert({ contact_id: ct.id, channel_id: ch.id, status: "novo" })
-            .select("id")
-            .single();
-          convId = newConv!.id;
-        }
-        await supabaseAdmin.from("messages").insert({
-          conversation_id: convId!,
-          direction: "out",
-          body: item.rendered_text,
-          sent_via_channel_id: ch.id,
-        });
-      } else {
-        failed++;
-        const tooMany = attempts >= 3;
-        const backoffMs = Math.min(60_000 * Math.pow(2, attempts), 60 * 60_000);
-        await supabaseAdmin
-          .from("message_queue")
-          .update({
-            status: tooMany ? "failed" : "pending",
-            attempts,
-            last_error: result.body.slice(0, 500),
-            scheduled_for: new Date(Date.now() + backoffMs).toISOString(),
-          })
-          .eq("id", item.id);
-        if (item.campaign_recipient_id && tooMany) {
-          await supabaseAdmin
-            .from("campaign_recipients")
-            .update({ status: "failed", error: result.body.slice(0, 300) })
-            .eq("id", item.campaign_recipient_id);
-        }
-        await supabaseAdmin
-          .from("channels")
-          .update({ status: result.status === 401 ? "error" : ch.status, last_error: result.body.slice(0, 500) })
-          .eq("id", ch.id);
-      }
+      const outcome = await processQueueItem(item, ctx);
+      if (outcome === "sent") sent++;
+      else if (outcome === "failed") failed++;
+      else if (outcome === "rescheduled") rescheduled++;
+      else skipped++;
     }
 
     return { sent, failed, skipped, rescheduled, totalProcessed: (items ?? []).length };
