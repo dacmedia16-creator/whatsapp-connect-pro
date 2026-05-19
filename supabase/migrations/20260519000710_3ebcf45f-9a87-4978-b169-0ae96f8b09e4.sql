@@ -1,0 +1,1 @@
+drop policy if exists "campaign_media_public_read" on storage.objects;

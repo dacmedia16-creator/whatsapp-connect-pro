@@ -33,6 +33,7 @@ import { ptBR } from "date-fns/locale";
 import { MethodCard } from "@/components/campaign/method-card";
 import { RecipientTable } from "@/components/campaign/recipient-table";
 import { ComplianceSummary } from "@/components/campaign/compliance-summary";
+import { CampaignMediaPicker, type CampaignMedia } from "@/components/campaign/media-picker";
 import { listContactListsFn, previewRecipientsFn, createCampaignFn } from "@/lib/campaigns.functions";
 import { emptySummary, renderTemplate, type ResolvedContact, type ResolveSummary } from "@/lib/recipient-resolver";
 import { normalizePhoneE164 } from "@/lib/phone";
@@ -60,6 +61,8 @@ type Campaign = {
   scheduled_at: string | null;
   total_recipients: number;
   created_at: string;
+  media_url?: string | null;
+  media_type?: string | null;
 };
 
 const STATUS_LABELS: Record<Campaign["status"], { label: string; cls: string }> = {
@@ -144,6 +147,9 @@ function CampaignsPage() {
                     <Link to="/campaigns/$campaignId" params={{ campaignId: c.id }} className="font-medium hover:underline">
                       {c.name}
                     </Link>
+                    {c.media_url && (
+                      <span className="ml-2 text-xs text-muted-foreground" title={`Anexo: ${c.media_type}`}>📎</span>
+                    )}
                     {c.description && <p className="text-xs text-muted-foreground line-clamp-1">{c.description}</p>}
                   </TableCell>
                   <TableCell>
@@ -228,6 +234,7 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
 
   // step 2
   const [message, setMessage] = useState("Olá {{nome}}, ");
+  const [media, setMedia] = useState<CampaignMedia | null>(null);
   const [initiate, setInitiate] = useState(true);
 
   // step 3 — configurações avançadas de envio
@@ -241,7 +248,7 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
     setListIds([]); setTagSelection([]); setTagMatch("any");
     setManualRows([]); setImportedRows([]);
     setResolved([]); setSummary(emptySummary());
-    setMessage("Olá {{nome}}, "); setInitiate(true);
+    setMessage("Olá {{nome}}, "); setMedia(null); setInitiate(true);
     setSendSettings(SEND_SETTINGS_DEFAULTS);
   };
 
@@ -402,6 +409,9 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
           recipients,
           initiate,
           sendSettings,
+          media: media
+            ? { url: media.url, type: media.type, mime: media.mime, filename: media.filename }
+            : null,
         },
       });
     },
@@ -653,6 +663,10 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
                           onClick={() => setMessage((m) => m + " " + v)}>+ {v}</Badge>
                       ))}
                     </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Anexo (opcional)</Label>
+                    <CampaignMediaPicker value={media} onChange={setMedia} />
                   </div>
                   {warnings.length > 0 && (
                     <div className="rounded-md border border-warning/40 bg-warning/5 p-3 text-xs text-warning space-y-1">

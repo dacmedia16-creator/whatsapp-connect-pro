@@ -168,6 +168,12 @@ const createInput = z.object({
     auto_pause_outside_hours: z.boolean(),
     auto_pause_on_all_channels_down: z.boolean(),
   }).optional(),
+  media: z.object({
+    url: z.string().url().max(2048),
+    type: z.enum(["image", "video", "audio", "document"]),
+    mime: z.string().min(1).max(120),
+    filename: z.string().min(1).max(255),
+  }).nullable().optional(),
 });
 
 const OPT_OUT_FOOTER = "\n\nResponda SAIR para não receber mais mensagens.";
@@ -260,6 +266,10 @@ export const createCampaignFn = createServerFn({ method: "POST" })
         status,
         total_recipients: contactIds.length,
         created_by: context.userId,
+        media_url: data.media?.url ?? null,
+        media_type: data.media?.type ?? null,
+        media_mime: data.media?.mime ?? null,
+        media_filename: data.media?.filename ?? null,
       })
       .select("id")
       .single();
