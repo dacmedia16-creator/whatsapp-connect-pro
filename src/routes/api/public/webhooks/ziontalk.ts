@@ -112,7 +112,11 @@ export const Route = createFileRoute("/api/public/webhooks/ziontalk")({
           }
           conversationId = newConv.id;
         } else {
-          const patch: Record<string, unknown> = {
+          const patch: {
+            last_message_at: string;
+            unread_count: number;
+            channel_id?: string;
+          } = {
             last_message_at: new Date().toISOString(),
             unread_count: (existingConv?.unread_count ?? 0) + 1,
           };
