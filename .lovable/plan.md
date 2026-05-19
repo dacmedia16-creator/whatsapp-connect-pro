@@ -1,40 +1,48 @@
-## Paginação 10 em 10 no seletor de listas
+## Seleção de contatos dentro da lista (10 em 10)
 
-No passo "Para quem enviar?" → método **Lista**, o bloco "Selecione uma ou mais listas" hoje mostra todas as listas numa área rolável. Vou paginar em **10 por página**, mantendo a seleção entre páginas.
+Hoje, ao escolher uma lista no passo "Para quem enviar?", todos os contatos da lista vão direto para o cálculo de destinatários. Vou adicionar uma etapa de **revisão paginada** onde o usuário marca/desmarca contatos antes de calcular.
 
-### Mudanças (apenas em `src/routes/_authenticated/campaigns.index.tsx`)
+### Backend (novo serverFn)
 
-1. **Novo estado local** ao lado de `listIds`:
-   - `const [listsPage, setListsPage] = useState(0);`
-   - `const PAGE_SIZE = 10;`
+Em `src/lib/campaigns.functions.ts`, adicionar `listContactsOfListsFn`:
+- Input: `{ listIds: string[] }` (1–50 UUIDs).
+- Lê `contact_list_items` → `contacts(id, name, phone_e164, tags, consent, opt_out_at)`.
+- Dedupe por `contact.id`.
+- Retorna `Array<{ id, name, phone_e164, tags, consent, optOut }>` ordenado por nome.
 
-2. **Derivar página atual** antes do `.map`:
-   - `pageCount = Math.max(1, Math.ceil(lists.length / PAGE_SIZE))`
-   - `pageLists = lists.slice(listsPage * 10, listsPage * 10 + 10)`
-   - Clamp: se `listsPage >= pageCount`, resetar para 0 (via `useEffect` dependente de `lists.length`).
+### Frontend (`src/routes/_authenticated/campaigns.index.tsx`)
 
-3. **Render**: trocar `lists.map(...)` por `pageLists.map(...)`. A `div` rolável passa a ter altura natural (sem `max-h-56 overflow-y-auto`) já que são no máx. 10 itens.
+1. **Novo estado**:
+   - `listContacts: Contact[]` — contatos carregados das listas selecionadas.
+   - `excludedContactIds: Set<string>` — quem foi desmarcado (padrão: todos marcados).
+   - `contactsPage: number` (0-based), `CONTACTS_PAGE_SIZE = 10`.
+   - `loadingContacts: boolean`.
 
-4. **Cabeçalho da seleção** (linha 510-528): adicionar uma terceira ação:
-   - **"Selecionar todas da página"** → `setListIds(prev => Array.from(new Set([...prev, ...pageLists.map(l => l.id)])))`
-   - Manter **"Selecionar todas"** (todas as listas, todas as páginas) e **"Limpar"**.
+2. **Fluxo**:
+   - Botão atual **"Calcular destinatários"** vira **"Carregar contatos"** quando `method === "list"` e `listContacts.length === 0`.
+   - Ao clicar: chama `listContactsOfListsFn({ listIds })`, popula `listContacts`, marca todos por padrão (`excludedContactIds = new Set()`), abre o bloco de revisão.
+   - Aparece um novo card **"Revisar contatos"** com tabela paginada (10/página):
+     - Checkbox por linha (controla `excludedContactIds`).
+     - Colunas: ✓ | Nome | Telefone | Tags | Status (consent / opt-out badge).
+     - Cabeçalho: "Marcar página", "Desmarcar página", "Marcar todos", "Desmarcar todos".
+     - Rodapé: `‹ Anterior | Página X de Y | N selecionados de M | Próxima ›` + botão **"Calcular destinatários (N)"**.
+   - "Calcular destinatários" filtra `listContacts` por `!excludedContactIds.has(id)` e chama `previewRecipientsFn` com `method: "manual"` passando essas linhas — assim a tela de preview / criação já existente funciona sem mudar `createCampaignFn`.
+   - Botão **"Trocar listas"** limpa `listContacts` e volta ao seletor.
 
-5. **Rodapé do bloco** (entre a div da lista e o rodapé "X lista(s)…"): adicionar controles de paginação quando `lists.length > 10`:
-   ```
-   [‹ Anterior]   Página {listsPage+1} de {pageCount}   ({lists.length} listas)   [Próxima ›]
-   ```
-   - Botões `variant="ghost" size="sm"` com `ChevronLeft` / `ChevronRight` (já em uso no projeto via lucide-react — adicionar ao import se faltar).
-   - Desabilitar nas extremidades.
+3. **Quando o usuário troca a seleção de listas** (`listIds` muda) ou volta para Etiquetas/Importar/Manual: resetar `listContacts`, `excludedContactIds`, `contactsPage`.
 
-6. **Contagem do rodapé existente** (linha 561-564) permanece igual — usa `listIds` global, independente de página.
+### Detalhes técnicos
 
-### Comportamento
-- A seleção (`listIds`) é global e persiste ao trocar de página.
-- "Selecionar todas" continua marcando todas as listas do banco (não só a página).
-- "Selecionar todas da página" é o atalho 10 em 10 pedido.
-- O `Badge` "N contato(s)" e o estilo dos itens não mudam.
+- Persistência continua via `method: "manual"` no `previewRecipientsFn` (já aceita até 5000 linhas, e `createCampaignFn` recebe `recipients` direto). Mantém o resto do fluxo intacto.
+- Sem alterações de schema, RLS ou outras telas.
+- Sem mudança nas abas Etiquetas / Importar / Manual nem no `RecipientTable` do preview pós-cálculo.
+
+### Arquivos alterados
+
+- `src/lib/campaigns.functions.ts` — novo `listContactsOfListsFn`.
+- `src/routes/_authenticated/campaigns.index.tsx` — estado, fetch, tabela paginada de revisão.
 
 ### Não muda
-- Nenhuma alteração de backend, schema ou lógica de `runPreview`.
-- Nenhuma alteração nas outras abas (Etiquetas, Importar, Manual) nem no `RecipientTable`.
-- Sem novos componentes nem dependências.
+
+- Backend de criação de campanha, envio, ou tabelas.
+- Outras abas de seleção de público.
