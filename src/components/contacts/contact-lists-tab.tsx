@@ -464,6 +464,21 @@ function ManageListMembersDialog({
           <div className="space-y-2">
             <div className="flex items-center justify-between gap-2">
               <h4 className="text-sm font-medium">Adicionar contatos</h4>
+              <div className="flex items-center gap-1">
+                {canManage && (
+                  <>
+                    <ImportCsvDialog listId={list.id} onDone={() => {
+                      qc.invalidateQueries({ queryKey: ["contact_list_items", list.id] });
+                      qc.invalidateQueries({ queryKey: ["contact_lists_counts"] });
+                      qc.invalidateQueries({ queryKey: ["contacts_for_list_picker"] });
+                    }} />
+                    <BulkManualDialog listId={list.id} onDone={() => {
+                      qc.invalidateQueries({ queryKey: ["contact_list_items", list.id] });
+                      qc.invalidateQueries({ queryKey: ["contact_lists_counts"] });
+                      qc.invalidateQueries({ queryKey: ["contacts_for_list_picker"] });
+                    }} />
+                  </>
+                )}
               {canManage && bulkSel.size > 0 && (
                 <Button
                   size="sm"
@@ -477,6 +492,7 @@ function ManageListMembersDialog({
                   Adicionar {bulkSel.size}
                 </Button>
               )}
+              </div>
             </div>
             <div className="relative">
               <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
