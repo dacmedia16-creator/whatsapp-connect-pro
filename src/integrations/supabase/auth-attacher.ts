@@ -6,7 +6,23 @@ import { supabase } from './client'
 // the browser never attaches the bearer token to serverFn RPCs.
 export const attachSupabaseAuth = createMiddleware({ type: 'function' }).client(
   async ({ next }) => {
-    const { data } = await supabase.auth.getSession()
+    let { data } = await supabase.auth.getSession()
+    const session = data.session
+    // Proactively refresh if the token is expired or about to expire (60s window).
+    // The SDK's autoRefreshToken only fires while the tab is active; idle/sleeping
+    // tabs can hold a stale token that the server rejects with "JWT has expired".
+    if (session?.expires_at) {
+      const nowSec = Math.floor(Date.now() / 1000)
+      if (session.expires_at - nowSec < 60) {
+        try {
+          const { data: refreshed } = await supabase.auth.refreshSession()
+          if (refreshed.session) data = { session: refreshed.session }
+        } catch {
+          // Refresh failed (refresh_token revoked/expired). Fall through; the
+          // server will respond 401 and the client error handler signs the user out.
+        }
+      }
+    }
     const token = data.session?.access_token
     return next({
       headers: token ? { Authorization: `Bearer ${token}` } : {},
