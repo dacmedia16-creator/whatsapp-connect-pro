@@ -324,6 +324,12 @@ export const createCampaignFn = createServerFn({ method: "POST" })
           method: data.method,
           ...(data.methodSummary ?? {}),
           autoPauseOnErrors: !!data.autoPauseOnErrors,
+          server_resolved: {
+            found: serverFound,
+            eligible: serverEligible,
+            client_submitted: clientCount,
+            diff_from_client: contactIds.length - clientCount,
+          },
         },
         channel_ids: channelIds,
         rate_per_min: data.ratePerMin,
