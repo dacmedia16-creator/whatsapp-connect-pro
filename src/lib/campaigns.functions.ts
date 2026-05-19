@@ -4,6 +4,7 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { classifyRows, type RawRow, type ResolvedContact, type ResolveSummary, emptySummary } from "./recipient-resolver";
 import { normalizePhoneE164 } from "./phone";
+import { enqueueCampaignCore } from "./ziontalk.functions";
 
 async function assertManager(userId: string) {
   const { data } = await supabaseAdmin.from("user_roles").select("role").eq("user_id", userId);
@@ -380,5 +381,22 @@ export const createCampaignFn = createServerFn({ method: "POST" })
       .upsert(settingsRow, { onConflict: "campaign_id" });
     if (sErr) throw new Error(sErr.message);
 
-    return { id: campaign.id, status, eligible: contactIds.length };
+    // Se "Iniciar agora" foi marcado e não há agendamento, já alimenta a fila.
+    // Sem isso a campanha fica em "running" mas nada chega ao ZionTalk porque
+    // o cron só lê message_queue.
+    let enqueued = 0;
+    if (data.initiate && !data.scheduledAt) {
+      try {
+        const r = await enqueueCampaignCore(campaign.id);
+        enqueued = r.enqueued;
+      } catch (e: any) {
+        await supabaseAdmin
+          .from("campaigns")
+          .update({ status: "draft" })
+          .eq("id", campaign.id);
+        throw new Error(`Falha ao enfileirar campanha: ${e?.message ?? e}`);
+      }
+    }
+
+    return { id: campaign.id, status, eligible: contactIds.length, enqueued };
   });
