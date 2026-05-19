@@ -1,39 +1,51 @@
-# Equilibrar envios entre os chips
+# Marcar campanha como Concluída automaticamente
 
 ## Diagnóstico
 
-Distribuição real das últimas 24h (`send_logs`): 14 / 17 / 4 / 11. As campanhas estão em `rotation_mode = round_robin`, mas saiu desigual por dois motivos no código:
+Olhando no banco, as duas campanhas estão de fato terminadas:
 
-1. **Cursor de round-robin é em memória** (`ctx.rrCursor` em `src/lib/send/channel-selector.server.ts`). Cada execução do cron (`process-queue`) cria um `SelectorContext` novo → o cursor reinicia em 0 a cada batch. Resultado: o primeiro chip da lista é escolhido com mais frequência.
-2. **Skip silencioso por pacing/limite**: quando um chip falha em algum filtro (delay entre envios, max/min, max/hora, status), o RR pula sem "devolver a vez" — chips mais lentos acumulam menos.
+- **REMAX - Visita Prova**: 30 de 30 enviados, 0 na fila → status ainda `running`
+- **remax 2**: 3 de 3 enviados, 0 na fila → status ainda `running`
 
-## Solução recomendada
+O motivo é simples: **não existe nenhum código que mude o status para `done` automaticamente**. Hoje o `done` só acontece se o usuário clicar manualmente no botão "Finalizar" (em `campaigns.$campaignId.tsx` e `sending-panel.tsx`). O cron de envio (`sender.server.ts`) só lê `done` para parar de enviar — nunca grava.
 
-Trocar o default para **`least_used`** (já implementado em `pickChannel`): a cada item, ordena os chips por `sent_today` ascendente. É auto-balanceador — se um chip ficar para trás, vira primeiro candidato até equiparar.
+## O que vou fazer
 
-Mudanças:
+### 1. Auto-finalizar ao terminar o último envio
 
-1. **`src/components/campaign/send-settings-form.tsx`**
-   - Trocar `SEND_SETTINGS_DEFAULTS.rotation_mode` de `"round_robin"` para `"least_used"`.
-   - Reordenar os cards do `RadioGroup` para "Menos usado" aparecer primeiro, com badge "Recomendado".
-   - Ajustar copy do "Round-robin" indicando que pode ficar desigual quando há limites/pacing.
+Em `src/lib/send/sender.server.ts`, ao final de `processQueueItem` quando o envio é bem-sucedido (ou quando um recipient vai para `failed` definitivo após 3 tentativas), checar se ainda restam destinatários pendentes da campanha:
 
-2. **`src/lib/campaigns.functions.ts`**
-   - No upsert de `campaign_send_settings`, se o cliente não enviar `rotation_mode`, gravar `"least_used"` em vez de cair no default da coluna (`round_robin`).
+```sql
+select count(*) from campaign_recipients
+where campaign_id = $1 and status = 'queued'
+```
 
-3. **Campanhas em andamento** (REMAX - Visita Prova, remax 2): atualizar via insert tool para `rotation_mode = 'least_used'` — pergunto antes de executar.
+Se `count = 0` **e** não há itens em `message_queue` com `status in ('pending','processing')` para essa campanha, marcar `campaigns.status = 'done'`.
 
-## Alternativa (manter round-robin "de verdade")
+Para evitar custo a cada envio, só rodar essa checagem quando o item processado for de campanha (já temos `campaignId`) e o resultado foi `sent` ou `failed`-final. Cache simples por batch (`Set<string>` em `SenderContext`) para não checar a mesma campanha mais de uma vez por execução do cron.
 
-Persistir o cursor no banco (`campaign_send_settings.rr_cursor int`), incrementando a cada `pickChannel`. Mais código (migration + update por item) e ainda assim não compensa skips por pacing/limite. Por isso recomendo `least_used`.
+### 2. Backfill das duas campanhas atuais
+
+Via insert tool, atualizar `REMAX - Visita Prova` e `remax 2` para `status = 'done'` agora, já que ambas estão 100% concluídas.
+
+### 3. UI (sem mudança)
+
+A página `campaigns.index.tsx` já tem o badge "Concluída" mapeado para o status `done` — vai aparecer sozinho assim que o status mudar. Nada a fazer no front.
+
+## Detalhes técnicos
+
+- **Arquivo principal**: `src/lib/send/sender.server.ts`
+  - Adicionar helper `maybeFinishCampaign(ctx, campaignId)` que faz as duas contagens e o update.
+  - Chamar após o ramo `result.ok` (depois de atualizar `campaign_recipients` para `sent`) e no ramo de falha quando `tooMany === true`.
+  - Adicionar `finishedCheckedCampaigns: Set<string>` ao `SenderContext`.
+- **Backfill**: `UPDATE campaigns SET status='done' WHERE id IN ('ab34583a-…','1297e253-…')`.
+- **Sem mudança de schema**: o enum `campaign_status` já tem `done`.
 
 ## Validação
 
-- Nova campanha com 4 chips ativos e sem limite atingido → diferença ≤ 1 entre o chip mais usado e o menos usado em `send_logs`.
-- Campanhas antigas com `round_robin` continuam funcionando (sem migration forçada).
+- Após implementar e rodar o backfill, as duas linhas em `/campaigns` devem aparecer com o badge **Concluída** em vez de **Em execução**.
+- Próxima campanha nova: ao terminar o último envio, o status deve virar `done` automaticamente dentro do mesmo tick do cron.
 
 ## Pergunta
 
-Confirmo dois pontos antes de implementar:
-- (a) Trocar default para **Menos usado** ✅ (recomendado)
-- (b) Atualizar as **2 campanhas em andamento** para `least_used` agora, ou deixar só para campanhas novas?
+Pode prosseguir com (a) o auto-finalizar e (b) o backfill das duas campanhas existentes para `Concluída`?

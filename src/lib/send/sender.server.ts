@@ -12,6 +12,7 @@ export type SenderContext = SelectorContext & {
   secret: string | undefined;
   keyCache: Map<string, string | null>;
   mediaCache: Map<string, { url: string; filename: string; mime: string } | null>;
+  finishChecked: Set<string>;
 };
 
 export function createSenderContext(secret: string | undefined): SenderContext {
@@ -23,6 +24,7 @@ export function createSenderContext(secret: string | undefined): SenderContext {
     secret,
     keyCache: new Map(),
     mediaCache: new Map(),
+    finishChecked: new Set(),
   };
 }
 
@@ -54,6 +56,36 @@ async function pushNextScheduledFor(channelId: string, nextAvailableMs: number) 
     await supabaseAdmin.from("message_queue")
       .update({ scheduled_for: nextIso }).eq("id", next.id);
   }
+}
+
+// Marca a campanha como `done` se não restarem destinatários `queued`
+// nem itens na `message_queue` em `pending`/`processing`.
+async function maybeFinishCampaign(ctx: SenderContext, campaignId: string) {
+  if (ctx.finishChecked.has(campaignId)) return;
+  ctx.finishChecked.add(campaignId);
+
+  const { count: queued } = await supabaseAdmin
+    .from("campaign_recipients")
+    .select("id", { count: "exact", head: true })
+    .eq("campaign_id", campaignId)
+    .eq("status", "queued");
+  if ((queued ?? 0) > 0) return;
+
+  const { data: pendingItems } = await supabaseAdmin
+    .from("message_queue")
+    .select("id, recipient:campaign_recipients(campaign_id)")
+    .in("status", ["pending", "processing"])
+    .limit(500);
+  const stillPending = (pendingItems ?? []).some(
+    (it: any) => it?.recipient?.campaign_id === campaignId,
+  );
+  if (stillPending) return;
+
+  await supabaseAdmin
+    .from("campaigns")
+    .update({ status: "done" })
+    .eq("id", campaignId)
+    .in("status", ["running", "scheduled", "paused"]);
 }
 
 // Processa um item da fila, aplicando todos os 10 passos descritos na especificação.
@@ -264,6 +296,7 @@ export async function processQueueItem(item: any, ctx: SenderContext): Promise<P
         ? [{ url: media.url, filename: media.filename, mime: media.mime }]
         : [],
     });
+    if (campaignId) await maybeFinishCampaign(ctx, campaignId);
     return "sent";
   }
 
@@ -286,5 +319,6 @@ export async function processQueueItem(item: any, ctx: SenderContext): Promise<P
     status: result.status === 401 ? "error" : ch.status,
     last_error: result.body.slice(0, 500),
   }).eq("id", ch.id);
+  if (tooMany && campaignId) await maybeFinishCampaign(ctx, campaignId);
   return "failed";
 }
