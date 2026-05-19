@@ -233,6 +233,28 @@ type KeyRow = {
   revoked_reason: string | null;
 };
 
+function WebhookUrlRow({ channelId }: { channelId: string }) {
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  const url = `${origin}/api/public/webhooks/ziontalk?token=SEU_ZION_WEBHOOK_TOKEN&channel_id=${channelId}`;
+  const onCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(url);
+      toast.success("URL copiada — substitua SEU_ZION_WEBHOOK_TOKEN pelo seu token");
+    } catch {
+      toast.error("Não foi possível copiar");
+    }
+  };
+  return (
+    <div className="flex items-center gap-2 pl-9">
+      <Label className="text-xs text-muted-foreground shrink-0">Webhook</Label>
+      <Input readOnly value={url} className="h-8 text-xs font-mono" onFocus={(e) => e.currentTarget.select()} />
+      <Button size="icon" variant="outline" className="h-8 w-8 shrink-0" onClick={onCopy} title="Copiar URL do webhook">
+        <Copy className="h-3.5 w-3.5" />
+      </Button>
+    </div>
+  );
+}
+
 function ChannelKeysDialog({ channelId, channelLabel }: { channelId: string; channelLabel: string }) {
   const [open, setOpen] = useState(false);
   const [newKey, setNewKey] = useState("");
