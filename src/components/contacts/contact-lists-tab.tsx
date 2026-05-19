@@ -1,6 +1,8 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useServerFn } from "@tanstack/react-start";
 import { supabase } from "@/integrations/supabase/client";
+import { addContactsToListFn } from "@/lib/contact-lists.functions";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -16,7 +18,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
   DialogFooter, DialogDescription,
 } from "@/components/ui/dialog";
-import { Plus, Trash2, Pencil, Users, Search, UserPlus, X } from "lucide-react";
+import { Plus, Trash2, Pencil, Users, Search, UserPlus, X, Upload, ListPlus } from "lucide-react";
 import { toast } from "sonner";
 import { formatPhone } from "@/lib/phone";
 
