@@ -529,14 +529,37 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
                   <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Digite o nome da campanha" maxLength={160} />
                 </div>
                 <div className="space-y-1.5">
-                  <Label>Agendamento</Label>
-                  <Input
-                    type="datetime-local"
-                    value={scheduledAt}
-                    min={new Date(Date.now() + 60_000).toISOString().slice(0, 16)}
-                    onChange={(e) => setScheduledAt(e.target.value)}
-                  />
-                  <p className="text-[11px] text-muted-foreground">Vazio = envio imediato ao iniciar</p>
+                  <Label>Quando enviar</Label>
+                  <div className="grid grid-cols-2 gap-1 rounded-md border p-1 bg-muted/30">
+                    <button
+                      type="button"
+                      onClick={() => setScheduledAt("")}
+                      className={`text-xs font-medium rounded px-2 py-1.5 transition ${scheduledAt === "" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                    >
+                      ⚡ Enviar agora
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!scheduledAt) {
+                          const d = new Date(Date.now() + 15 * 60_000);
+                          d.setSeconds(0, 0);
+                          setScheduledAt(d.toISOString().slice(0, 16));
+                        }
+                      }}
+                      className={`text-xs font-medium rounded px-2 py-1.5 transition ${scheduledAt !== "" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                    >
+                      📅 Agendar
+                    </button>
+                  </div>
+                  {scheduledAt !== "" && (
+                    <Input
+                      type="datetime-local"
+                      value={scheduledAt}
+                      min={new Date(Date.now() + 60_000).toISOString().slice(0, 16)}
+                      onChange={(e) => setScheduledAt(e.target.value)}
+                    />
+                  )}
                 </div>
                 <div className="space-y-1.5">
                   <Label>Canal *</Label>
@@ -901,7 +924,7 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
             )}
             {step === 3 && (
               <Button disabled={!canSubmit || submit.isPending} onClick={() => submit.mutate()}>
-                {!initiate ? "Salvar rascunho" : scheduledAt ? "Agendar campanha" : "Iniciar campanha"}
+                {!initiate ? "Salvar rascunho" : scheduledAt ? "Agendar campanha" : "Enviar agora"}
               </Button>
             )}
           </div>
