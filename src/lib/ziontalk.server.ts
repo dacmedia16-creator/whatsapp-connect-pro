@@ -24,7 +24,8 @@ export async function zionSendMessage(opts: {
       }
       const buf = await r.arrayBuffer();
       const blob = new Blob([buf], { type: opts.media.mime || r.headers.get("content-type") || "application/octet-stream" });
-      form.append("file", blob, opts.media.filename);
+      // ZionTalk espera o campo "attachments" (multipart) para arquivos.
+      form.append("attachments", blob, opts.media.filename);
     } catch (e: any) {
       return { ok: false, status: 0, body: `Erro de mídia: ${e?.message ?? "desconhecido"}` };
     }
