@@ -33,6 +33,30 @@ export async function processQueueItem(item: any, ctx: SenderContext): Promise<P
   const campaignId: string | null = item.recipient?.campaign_id ?? null;
   const settings = await getSettings(ctx, campaignId);
 
+  // Defesa em profundidade: se a campanha foi pausada/finalizada, não envia.
+  if (campaignId) {
+    const { data: camp } = await supabaseAdmin
+      .from("campaigns").select("status").eq("id", campaignId).maybeSingle();
+    if (camp?.status === "done") {
+      await supabaseAdmin.from("message_queue")
+        .update({ status: "failed", last_error: "Campanha finalizada" }).eq("id", item.id);
+      if (item.campaign_recipient_id) {
+        await supabaseAdmin.from("campaign_recipients")
+          .update({ status: "failed", error: "Campanha finalizada" })
+          .eq("id", item.campaign_recipient_id).eq("status", "queued");
+      }
+      return "skipped";
+    }
+    if (camp?.status === "paused") {
+      await supabaseAdmin.from("message_queue").update({
+        status: "pending",
+        scheduled_for: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+        last_error: "Campanha pausada — reagendado",
+      }).eq("id", item.id);
+      return "rescheduled";
+    }
+  }
+
   // (1+2) Dados básicos + consentimento
   if (!ch || !ct) {
     await supabaseAdmin.from("message_queue")
