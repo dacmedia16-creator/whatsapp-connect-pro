@@ -232,6 +232,9 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
   // results
   const [resolved, setResolved] = useState<ResolvedContact[]>([]);
   const [summary, setSummary] = useState<ResolveSummary>(emptySummary());
+  const [excludedKeys, setExcludedKeys] = useState<Set<string>>(new Set());
+  const [recipientsPage, setRecipientsPage] = useState(0);
+  const RECIPIENTS_PAGE_SIZE = 10;
 
   // step 2
   const [message, setMessage] = useState("Olá {{nome}}, ");
@@ -249,6 +252,7 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
     setListIds([]); setTagSelection([]); setTagMatch("any");
     setManualRows([]); setImportedRows([]);
     setResolved([]); setSummary(emptySummary());
+    setExcludedKeys(new Set()); setRecipientsPage(0);
     setMessage("Olá {{nome}}, "); setMedia(null); setInitiate(true);
     setSendSettings(SEND_SETTINGS_DEFAULTS);
   };
@@ -317,9 +321,13 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
       if (res) {
         setResolved(res.contacts);
         setSummary(res.summary);
+        setExcludedKeys(new Set());
+        setRecipientsPage(0);
       } else {
         setResolved([]);
         setSummary(emptySummary());
+        setExcludedKeys(new Set());
+        setRecipientsPage(0);
       }
     } catch (e: any) {
       toast.error(e.message ?? "Falha ao calcular destinatários");
@@ -367,17 +375,26 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
     }
   }
 
-  const eligibleCount = summary.eligible;
+  const keyFor = (c: ResolvedContact, i: number) =>
+    c.id ?? c.phone_e164 ?? `${c.rawPhone}-${i}`;
+
+  const eligibleRecipients = useMemo(
+    () =>
+      resolved.filter(
+        (r, i) =>
+          r.status === "eligible" &&
+          r.phone_e164 &&
+          !excludedKeys.has(keyFor(r, i)),
+      ),
+    [resolved, excludedKeys],
+  );
+
+  const eligibleCount = eligibleRecipients.length;
   const scheduledValid = !scheduledAt || new Date(scheduledAt).getTime() > Date.now() - 60_000;
   const canAdvance = !!name.trim() && channelIds.length > 0 && scheduledValid && eligibleCount >= 1;
   const canAdvanceFromStep2 = canAdvance && message.trim().length >= 5;
   const settingsError = useMemo(() => validateSendSettings(sendSettings), [sendSettings]);
   const canSubmit = canAdvanceFromStep2 && !settingsError;
-
-  const eligibleRecipients = useMemo(
-    () => resolved.filter((r) => r.status === "eligible" && r.phone_e164),
-    [resolved],
-  );
 
   const previewMsg = useMemo(() => {
     const first = eligibleRecipients[0];
@@ -691,7 +708,19 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
                   {(resolved.length > 0 || method) && (
                     <>
                       <ComplianceSummary summary={summary} />
-                      <RecipientTable contacts={resolved} />
+                      {resolved.length === 0 ? (
+                        <RecipientTable contacts={resolved} />
+                      ) : (
+                        <SelectableRecipients
+                          resolved={resolved}
+                          excludedKeys={excludedKeys}
+                          setExcludedKeys={setExcludedKeys}
+                          page={recipientsPage}
+                          setPage={setRecipientsPage}
+                          pageSize={RECIPIENTS_PAGE_SIZE}
+                          keyFor={keyFor}
+                        />
+                      )}
                     </>
                   )}
                 </CardContent>
@@ -794,5 +823,169 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
         </footer>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function SelectableRecipients({
+  resolved,
+  excludedKeys,
+  setExcludedKeys,
+  page,
+  setPage,
+  pageSize,
+  keyFor,
+}: {
+  resolved: ResolvedContact[];
+  excludedKeys: Set<string>;
+  setExcludedKeys: React.Dispatch<React.SetStateAction<Set<string>>>;
+  page: number;
+  setPage: React.Dispatch<React.SetStateAction<number>>;
+  pageSize: number;
+  keyFor: (c: ResolvedContact, i: number) => string;
+}) {
+  const total = resolved.length;
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  useEffect(() => {
+    if (page >= pageCount) setPage(0);
+  }, [pageCount, page, setPage]);
+
+  const start = page * pageSize;
+  const pageRows = resolved.slice(start, start + pageSize);
+  const selectableKeys = resolved
+    .map((c, i) => ({ c, k: keyFor(c, i) }))
+    .filter(({ c }) => c.status === "eligible" && c.phone_e164)
+    .map(({ k }) => k);
+  const selectedCount = selectableKeys.filter((k) => !excludedKeys.has(k)).length;
+
+  const toggle = (k: string, on: boolean) => {
+    setExcludedKeys((prev) => {
+      const next = new Set(prev);
+      if (on) next.delete(k);
+      else next.add(k);
+      return next;
+    });
+  };
+
+  const pageKeysSelectable = pageRows
+    .map((c, i) => ({ c, k: keyFor(c, start + i) }))
+    .filter(({ c }) => c.status === "eligible" && c.phone_e164)
+    .map(({ k }) => k);
+
+  const markPage = (on: boolean) => {
+    setExcludedKeys((prev) => {
+      const next = new Set(prev);
+      pageKeysSelectable.forEach((k) => {
+        if (on) next.delete(k);
+        else next.add(k);
+      });
+      return next;
+    });
+  };
+
+  const markAll = (on: boolean) => {
+    if (on) setExcludedKeys(new Set());
+    else setExcludedKeys(new Set(selectableKeys));
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+        <span className="font-medium">
+          {selectedCount} de {selectableKeys.length} elegíveis selecionados
+          {total !== selectableKeys.length && ` · ${total} no total`}
+        </span>
+        <div className="flex items-center gap-2">
+          <button type="button" className="text-primary hover:underline" onClick={() => markPage(true)}>
+            Marcar página
+          </button>
+          <span className="text-muted-foreground">·</span>
+          <button type="button" className="text-muted-foreground hover:underline" onClick={() => markPage(false)}>
+            Desmarcar página
+          </button>
+          <span className="text-muted-foreground">·</span>
+          <button type="button" className="text-primary hover:underline" onClick={() => markAll(true)}>
+            Marcar todos
+          </button>
+          <span className="text-muted-foreground">·</span>
+          <button type="button" className="text-muted-foreground hover:underline" onClick={() => markAll(false)}>
+            Desmarcar todos
+          </button>
+        </div>
+      </div>
+      <div className="border rounded-md overflow-hidden">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-10"></TableHead>
+              <TableHead>Nome</TableHead>
+              <TableHead>Telefone</TableHead>
+              <TableHead>Etiquetas</TableHead>
+              <TableHead>Status</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {pageRows.map((c, i) => {
+              const idx = start + i;
+              const k = keyFor(c, idx);
+              const selectable = c.status === "eligible" && !!c.phone_e164;
+              const checked = selectable && !excludedKeys.has(k);
+              return (
+                <TableRow key={k} className={!selectable ? "opacity-60" : ""}>
+                  <TableCell>
+                    <Checkbox
+                      checked={checked}
+                      disabled={!selectable}
+                      onCheckedChange={(v) => toggle(k, !!v)}
+                    />
+                  </TableCell>
+                  <TableCell className="font-medium text-sm">{c.name}</TableCell>
+                  <TableCell className="font-mono text-xs">
+                    {c.phone_e164 ?? <span className="text-destructive">{c.rawPhone}</span>}
+                  </TableCell>
+                  <TableCell className="text-xs">
+                    <div className="flex flex-wrap gap-1">
+                      {c.tags.slice(0, 3).map((t) => (
+                        <Badge key={t} variant="outline" className="text-[10px] px-1.5 py-0">{t}</Badge>
+                      ))}
+                      {c.tags.length > 3 && (
+                        <span className="text-muted-foreground">+{c.tags.length - 3}</span>
+                      )}
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-xs capitalize text-muted-foreground">{c.status.replace("_", " ")}</TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      </div>
+      {total > pageSize && (
+        <div className="flex items-center justify-between text-xs">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2"
+            onClick={() => setPage((p) => Math.max(0, p - 1))}
+            disabled={page === 0}
+          >
+            <ChevronLeft className="h-3.5 w-3.5 mr-1" /> Anterior
+          </Button>
+          <span className="text-muted-foreground">
+            Página {page + 1} de {pageCount} · {total} contato(s)
+          </span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2"
+            onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+            disabled={page >= pageCount - 1}
+          >
+            Próxima <ChevronRight className="h-3.5 w-3.5 ml-1" />
+          </Button>
+        </div>
+      )}
+    </div>
   );
 }
