@@ -1,5 +1,5 @@
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { recentSends } from "./rate-limit.server";
+import { recentSends, lastSendAt } from "./rate-limit.server";
 
 // Contexto compartilhado entre iterações de um mesmo batch: caches e cursor de RR.
 export type SelectorContext = {
@@ -70,6 +70,15 @@ export async function pickChannel(
     if (sentToday >= Math.min(maxDay, ch.daily_limit)) continue;
     if (settings?.max_per_minute && (await recentSends(cid, 60_000)) >= settings.max_per_minute) continue;
     if (settings?.max_per_hour && (await recentSends(cid, 3_600_000)) >= settings.max_per_hour) continue;
+    // Pacing por chip: respeita delay_seconds (com jitter, se configurado)
+    const minGapSec = Math.max(
+      Number(settings?.delay_seconds ?? 0) || 0,
+      Number(settings?.random_delay_min ?? 0) || 0,
+    );
+    if (minGapSec > 0) {
+      const last = await lastSendAt(cid);
+      if (last && Date.now() - last.getTime() < minGapSec * 1000) continue;
+    }
     return ch;
   }
   return null;
