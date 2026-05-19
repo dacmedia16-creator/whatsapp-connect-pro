@@ -798,7 +798,12 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
                     <p><span className="text-muted-foreground">Canais:</span> {channels.filter((c: any) => channelIds.includes(c.id)).map((c: any) => c.label).join(", ") || "—"}</p>
                     <p><span className="text-muted-foreground">Agendamento:</span> {scheduledAt ? format(new Date(scheduledAt), "dd/MM/yyyy HH:mm", { locale: ptBR }) : "Imediato"}</p>
                     <p><span className="text-muted-foreground">Método:</span> {method}</p>
-                    <p className="text-success"><span className="text-muted-foreground">Elegíveis:</span> {summary.eligible}</p>
+                    <p className="text-success">
+                      <span className="text-muted-foreground">Elegíveis nesta campanha:</span> {eligibleCount}
+                      {batchSize !== "all" && totalBatches > 1 && (
+                        <span className="text-xs text-muted-foreground"> (lote {safeBatchIndex + 1}/{totalBatches} de {allEligibleRecipients.length})</span>
+                      )}
+                    </p>
                     <p className="text-warning"><span className="text-muted-foreground">Bloqueados:</span> {summary.blockedOptOut + summary.blockedNoConsent + summary.invalidPhone + summary.duplicates}</p>
                   </div>
                 </CardContent>
