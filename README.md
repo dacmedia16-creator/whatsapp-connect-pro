@@ -1,4 +1,4 @@
-# ZionFlow
+# Denis Envia Flow
 
 Plataforma multicanal de WhatsApp para campanhas em massa e atendimento, integrada à API ZionTalk.
 
