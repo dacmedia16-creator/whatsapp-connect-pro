@@ -33,6 +33,7 @@ import { ptBR } from "date-fns/locale";
 import { MethodCard } from "@/components/campaign/method-card";
 import { RecipientTable } from "@/components/campaign/recipient-table";
 import { ComplianceSummary } from "@/components/campaign/compliance-summary";
+import { CampaignMediaPicker, type CampaignMedia } from "@/components/campaign/media-picker";
 import { listContactListsFn, previewRecipientsFn, createCampaignFn } from "@/lib/campaigns.functions";
 import { emptySummary, renderTemplate, type ResolvedContact, type ResolveSummary } from "@/lib/recipient-resolver";
 import { normalizePhoneE164 } from "@/lib/phone";
@@ -228,6 +229,7 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
 
   // step 2
   const [message, setMessage] = useState("Olá {{nome}}, ");
+  const [media, setMedia] = useState<CampaignMedia | null>(null);
   const [initiate, setInitiate] = useState(true);
 
   // step 3 — configurações avançadas de envio
@@ -241,7 +243,7 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
     setListIds([]); setTagSelection([]); setTagMatch("any");
     setManualRows([]); setImportedRows([]);
     setResolved([]); setSummary(emptySummary());
-    setMessage("Olá {{nome}}, "); setInitiate(true);
+    setMessage("Olá {{nome}}, "); setMedia(null); setInitiate(true);
     setSendSettings(SEND_SETTINGS_DEFAULTS);
   };
 
@@ -402,6 +404,9 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
           recipients,
           initiate,
           sendSettings,
+          media: media
+            ? { url: media.url, type: media.type, mime: media.mime, filename: media.filename }
+            : null,
         },
       });
     },
