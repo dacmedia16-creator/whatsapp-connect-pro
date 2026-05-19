@@ -309,24 +309,11 @@ export const processQueueFn = createServerFn({ method: "POST" })
   });
 
 /** Enqueue all recipients of a campaign into message_queue. */
-export const enqueueCampaignFn = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
-  .inputValidator((input) => z.object({ campaignId: z.string().uuid() }).parse(input))
-  .handler(async ({ data, context }) => {
-    const { userId } = context;
-    const { data: roles } = await supabaseAdmin
-      .from("user_roles")
-      .select("role")
-      .eq("user_id", userId);
-    const roleSet = new Set((roles ?? []).map((r) => r.role));
-    if (!roleSet.has("admin") && !roleSet.has("gestor")) {
-      throw new Error("Sem permissão");
-    }
-
-    const { data: campaign, error } = await supabaseAdmin
+export async function enqueueCampaignCore(campaignId: string): Promise<{ enqueued: number; message?: string }> {
+  const { data: campaign, error } = await supabaseAdmin
       .from("campaigns")
       .select("*")
-      .eq("id", data.campaignId)
+      .eq("id", campaignId)
       .maybeSingle();
     if (error || !campaign) throw new Error("Campanha não encontrada");
 
@@ -454,4 +441,20 @@ export const enqueueCampaignFn = createServerFn({ method: "POST" })
       .eq("id", campaign.id);
 
     return { enqueued: newQueueRows.length };
+}
+
+export const enqueueCampaignFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) => z.object({ campaignId: z.string().uuid() }).parse(input))
+  .handler(async ({ data, context }) => {
+    const { userId } = context;
+    const { data: roles } = await supabaseAdmin
+      .from("user_roles")
+      .select("role")
+      .eq("user_id", userId);
+    const roleSet = new Set((roles ?? []).map((r) => r.role));
+    if (!roleSet.has("admin") && !roleSet.has("gestor")) {
+      throw new Error("Sem permissão");
+    }
+    return enqueueCampaignCore(data.campaignId);
   });
