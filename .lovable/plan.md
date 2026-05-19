@@ -1,55 +1,50 @@
-## Problema
+## Diagnóstico
 
-A campanha "Teste" foi criada com a lista **"Corretores Remax Unica Escolha"** (178 contatos), mas acabou enfileirando **181 destinatários** — três a mais do que a lista contém. Esses três contatos extras vêm da base de contatos antiga e o usuário quer que a campanha use **só** o que está na fonte selecionada.
+A campanha "Teste" foi criada com **3 contatos manuais** (audience_filter mostra `server_resolved.eligible: 3`). Os 3 destinatários foram inseridos em `campaign_recipients` às 03:40:43. **49 segundos depois (03:41:32)** mais **178 destinatários** foram adicionados — total 181.
 
-Levantamento no banco confirmou:
-- `contact_list_items` da lista: **178**
-- `contacts` elegíveis na base inteira: **181** (consent=true, sem opt-out)
-- Diferença: 3 contatos elegíveis estão fora da lista, mas mesmo assim entraram
+Esses 178 vieram quando você clicou em **"Iniciar envio"**, que chama `enqueueCampaignFn` em `src/lib/ziontalk.functions.ts` (linhas 470‑535). Essa função **ignora completamente** o `method` da campanha e os destinatários já resolvidos. Ela faz:
 
-## Causa provável
+```ts
+let q = supabaseAdmin.from("contacts")
+  .select(...).eq("consent", true).is("opt_out_at", null);
+if (filter.tags?.length) q = q.contains("tags", filter.tags);
+const { data: contacts } = await q;
+// upsert em campaign_recipients
+```
 
-O `previewRecipientsFn` ("list") faz `select contact:contacts(...)` em `contact_list_items` — isso é correto. Mas o `createCampaignFn` **não revalida** que cada `recipient` enviado pelo cliente realmente pertence às listas declaradas em `methodSummary.listIds`. Se o estado de UI ficou sujo (ex.: o usuário trocou de método "tags → list" e a lista de `eligibleRecipients` reteve resíduos), o servidor aceita do mesmo jeito.
+Para `method = "manual"` (sem `filter.tags`), isso vira "pegue **todos** os contatos com consentimento" — exatamente os 178 antigos que vazaram, somados aos 3 manuais já presentes (deduplicados via `onConflict`), dando 181.
 
-Também falta: na tela de criação, o usuário não vê de forma explícita "lista tem 178, fila tem 181" — então o desvio passa despercebido.
+A correção que fizemos antes em `createCampaignFn` resolveu a **criação**, mas o bug se repetiu no caminho do **enqueue** (clique em "Iniciar envio").
 
 ## Plano
 
-### 1. Endurecer o servidor (fonte da verdade)
+### 1. Corrigir `enqueueCampaignFn` (`src/lib/ziontalk.functions.ts`)
 
-Em `src/lib/campaigns.functions.ts → createCampaignFn`:
+Eliminar a re‑resolução de destinatários no enqueue. Os destinatários já foram resolvidos e validados pelo `createCampaignFn` (autoritativo) e estão em `campaign_recipients`. O enqueue só deve:
 
-- Quando `method === "list"`: ignorar o array `recipients` do cliente e **recarregar** os contatos diretamente de `contact_list_items.in('list_id', methodSummary.listIds)`. Aplicar consent + opt-out + dedup por telefone. Resultado vira a fonte autoritativa de `contactIds`.
-- Quando `method === "tags"`: idem — refazer a query `contacts` filtrada por `methodSummary.tags` + `match`.
-- Quando `method === "import" | "manual"`: manter o caminho atual (não tem fonte canônica no DB), mas validar que cada `phone_e164` recebido aparece na lista de telefones que o cliente declarou ter importado/digitado.
-- Se a contagem final divergir do que o cliente enviou, registrar a diferença em `audience_filter` para auditoria.
+1. Carregar os `campaign_recipients` existentes da campanha (status `queued`).
+2. Carregar os `contacts` correspondentes (para name/phone/custom_fields usados na renderização).
+3. Validar canais e settings (mantém igual).
+4. Montar `message_queue` com rotação/delay (mantém igual).
+5. **Remover** o bloco que faz `supabase.from("contacts").select(...).eq("consent", true)` e o `upsert` em `campaign_recipients`.
 
-### 2. Limpar estado da UI ao trocar de método
+Se não houver `campaign_recipients` para a campanha, retornar `{ enqueued: 0, message: "Nenhum destinatário na campanha" }` em vez de criar do zero (criação só pode acontecer via `createCampaignFn`).
 
-Em `src/routes/_authenticated/campaigns.index.tsx`:
+Também atualizar `total_recipients` apenas se divergir, ou removê‑lo (já foi definido na criação) — evita reescrever.
 
-- Ao mudar `method`, já zera `resolved`, mas **também** zerar `excludedKeys`, `listIds`, `tagSelection`, `manualRows`, `importedRows` — para não vazar IDs/telefones de uma fonte anterior.
-- Garantir que `eligibleRecipients` (linha 425) só considere itens cuja `source === method` atual.
+### 2. Limpar a campanha "Teste" atual (opcional, sob aprovação)
 
-### 3. Tornar a contagem visível no passo 1
+Status atual: `done` com 181 destinatários, 0 enviados, 0 falhas. Opções:
+- **Não mexer** — está finalizada e nada foi enviado.
+- **Apagar** os 178 destinatários extras (`DELETE FROM campaign_recipients WHERE campaign_id='64351fe0...' AND contact_id NOT IN (<os 3 manuais>)`) — requer migration.
 
-Na seção "Destinatários" do wizard, mostrar um resumo curto em 3 números:
+Recomendo deixar como está, já que `status='done'` e progresso 0%.
 
-```text
-Lista: 178   →   Elegíveis: 175   →   Na fila: 175
-                                       (-3 sem consentimento)
-```
+### 3. Validação manual após deploy
 
-Hoje só aparece "X selecionados / Y total"; a quebra deixa claro de onde vem cada exclusão e impede o "+3 fantasma" passar batido.
+Criar nova campanha manual com 2‑3 contatos → clicar "Iniciar envio" → verificar que `total_recipients` permanece 2‑3 e que `message_queue` recebe só esses.
 
-### 4. Validação manual
+## Escopo
 
-Depois do deploy:
-1. Criar campanha pela lista "Corretores Remax": esperar exatamente 178 (ou menos, conforme consent).
-2. Trocar de método "list → tags → list" no meio do fluxo: contadores zeram, sem resíduo.
-3. Conferir no painel de envios que `campaign_recipients.count` bate com o resumo do wizard.
-
-## Fora de escopo
-
-- Não vou apagar contatos antigos da base (mantém histórico).
-- Não toca em send-panel, processamento de fila, autenticação ou cancelamento de campanha.
+- **In:** uma edição em `src/lib/ziontalk.functions.ts` (função `enqueueCampaignFn`).
+- **Out:** UI, criação de campanha (já corrigida), webhook, painel de envios, auth, RLS.

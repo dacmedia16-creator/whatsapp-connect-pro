@@ -488,18 +488,21 @@ export const enqueueCampaignFn = createServerFn({ method: "POST" })
       .maybeSingle();
     if (error || !campaign) throw new Error("Campanha não encontrada");
 
-    // Resolve recipients via audience_filter (tags include / consent required)
-    const filter = (campaign.audience_filter || {}) as { tags?: string[] };
-    let q = supabaseAdmin
-      .from("contacts")
-      .select("id, name, phone_e164, custom_fields, tags")
-      .eq("consent", true)
-      .is("opt_out_at", null);
-    if (filter.tags?.length) {
-      q = q.contains("tags", filter.tags);
+    // Carrega APENAS os destinatários já resolvidos no momento da criação.
+    // NÃO re-consulta `contacts` — isso vazaria contatos fora do método
+    // escolhido (lista/etiquetas/import/manual). createCampaignFn é
+    // autoritativo na seleção; o enqueue só agenda o que já existe.
+    const { data: existingRecs } = await supabaseAdmin
+      .from("campaign_recipients")
+      .select("id, contact_id, contact:contacts(id, name, phone_e164, custom_fields, tags, consent, opt_out_at)")
+      .eq("campaign_id", campaign.id);
+    if (!existingRecs || !existingRecs.length) {
+      return { enqueued: 0, message: "Nenhum destinatário na campanha" };
     }
-    const { data: contacts } = await q;
-    if (!contacts || !contacts.length) {
+    const contacts = existingRecs
+      .map((r: any) => r.contact)
+      .filter((c: any): c is { id: string; name: string; phone_e164: string; custom_fields: any; tags: string[] | null; consent: boolean; opt_out_at: string | null } => !!c && !!c.phone_e164 && !c.opt_out_at);
+    if (!contacts.length) {
       return { enqueued: 0, message: "Nenhum contato elegível" };
     }
 
@@ -523,21 +526,11 @@ export const enqueueCampaignFn = createServerFn({ method: "POST" })
     if (!channels || !channels.length) throw new Error("Nenhum canal disponível");
     const channelList = channels;
 
-    // Insert campaign_recipients (skip duplicates via ON CONFLICT)
-    const recipientRows = contacts.map((c) => ({
-      campaign_id: campaign.id,
-      contact_id: c.id,
-      status: "queued" as const,
-    }));
-    await supabaseAdmin.from("campaign_recipients").upsert(recipientRows, {
-      onConflict: "campaign_id,contact_id",
-      ignoreDuplicates: true,
-    });
-    const { data: recs } = await supabaseAdmin
-      .from("campaign_recipients")
-      .select("id, contact_id")
-      .eq("campaign_id", campaign.id)
-      .eq("status", "queued");
+    // Usa os recipients já existentes (não inserir novos aqui).
+    const eligibleContactIds = new Set(contacts.map((c) => c.id));
+    const recs = existingRecs
+      .filter((r: any) => eligibleContactIds.has(r.contact_id))
+      .map((r: any) => ({ id: r.id, contact_id: r.contact_id }));
 
     // Distribuição inicial conforme settings (rotação + delays).
     const startAt = campaign.scheduled_at ? new Date(campaign.scheduled_at).getTime() : Date.now();
@@ -615,7 +608,6 @@ export const enqueueCampaignFn = createServerFn({ method: "POST" })
       .from("campaigns")
       .update({
         status: campaign.scheduled_at && new Date(campaign.scheduled_at).getTime() > Date.now() ? "scheduled" : "running",
-        total_recipients: recipientIds.length,
       })
       .eq("id", campaign.id);
 
