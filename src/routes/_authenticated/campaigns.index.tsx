@@ -246,6 +246,23 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
   const previewFn = useServerFn(previewRecipientsFn);
   const createFn = useServerFn(createCampaignFn);
 
+  // Troca de método com reset completo — evita vazar IDs/telefones
+  // de uma fonte anterior para o cálculo de destinatários.
+  function selectMethod(m: Exclude<Method, "groups">) {
+    setMethod(m);
+    setListIds([]);
+    setTagSelection([]);
+    setTagMatch("any");
+    setManualRows([]);
+    setImportedRows([]);
+    setResolved([]);
+    setSummary(emptySummary());
+    setExcludedKeys(new Set());
+    setRecipientsPage(0);
+    previewReqIdRef.current++;
+    if (previewAbortRef.current) { try { previewAbortRef.current.abort(); } catch {} }
+  }
+
   const reset = () => {
     setStep(1); setName(""); setScheduledAt(""); setChannelIds([]); setMethod(null);
     setListIds([]); setTagSelection([]); setTagMatch("any");
