@@ -825,3 +825,167 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
     </Dialog>
   );
 }
+
+function SelectableRecipients({
+  resolved,
+  excludedKeys,
+  setExcludedKeys,
+  page,
+  setPage,
+  pageSize,
+  keyFor,
+}: {
+  resolved: ResolvedContact[];
+  excludedKeys: Set<string>;
+  setExcludedKeys: React.Dispatch<React.SetStateAction<Set<string>>>;
+  page: number;
+  setPage: React.Dispatch<React.SetStateAction<number>>;
+  pageSize: number;
+  keyFor: (c: ResolvedContact, i: number) => string;
+}) {
+  const total = resolved.length;
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  useEffect(() => {
+    if (page >= pageCount) setPage(0);
+  }, [pageCount, page, setPage]);
+
+  const start = page * pageSize;
+  const pageRows = resolved.slice(start, start + pageSize);
+  const selectableKeys = resolved
+    .map((c, i) => ({ c, k: keyFor(c, i) }))
+    .filter(({ c }) => c.status === "eligible" && c.phone_e164)
+    .map(({ k }) => k);
+  const selectedCount = selectableKeys.filter((k) => !excludedKeys.has(k)).length;
+
+  const toggle = (k: string, on: boolean) => {
+    setExcludedKeys((prev) => {
+      const next = new Set(prev);
+      if (on) next.delete(k);
+      else next.add(k);
+      return next;
+    });
+  };
+
+  const pageKeysSelectable = pageRows
+    .map((c, i) => ({ c, k: keyFor(c, start + i) }))
+    .filter(({ c }) => c.status === "eligible" && c.phone_e164)
+    .map(({ k }) => k);
+
+  const markPage = (on: boolean) => {
+    setExcludedKeys((prev) => {
+      const next = new Set(prev);
+      pageKeysSelectable.forEach((k) => {
+        if (on) next.delete(k);
+        else next.add(k);
+      });
+      return next;
+    });
+  };
+
+  const markAll = (on: boolean) => {
+    if (on) setExcludedKeys(new Set());
+    else setExcludedKeys(new Set(selectableKeys));
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+        <span className="font-medium">
+          {selectedCount} de {selectableKeys.length} elegíveis selecionados
+          {total !== selectableKeys.length && ` · ${total} no total`}
+        </span>
+        <div className="flex items-center gap-2">
+          <button type="button" className="text-primary hover:underline" onClick={() => markPage(true)}>
+            Marcar página
+          </button>
+          <span className="text-muted-foreground">·</span>
+          <button type="button" className="text-muted-foreground hover:underline" onClick={() => markPage(false)}>
+            Desmarcar página
+          </button>
+          <span className="text-muted-foreground">·</span>
+          <button type="button" className="text-primary hover:underline" onClick={() => markAll(true)}>
+            Marcar todos
+          </button>
+          <span className="text-muted-foreground">·</span>
+          <button type="button" className="text-muted-foreground hover:underline" onClick={() => markAll(false)}>
+            Desmarcar todos
+          </button>
+        </div>
+      </div>
+      <div className="border rounded-md overflow-hidden">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-10"></TableHead>
+              <TableHead>Nome</TableHead>
+              <TableHead>Telefone</TableHead>
+              <TableHead>Etiquetas</TableHead>
+              <TableHead>Status</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {pageRows.map((c, i) => {
+              const idx = start + i;
+              const k = keyFor(c, idx);
+              const selectable = c.status === "eligible" && !!c.phone_e164;
+              const checked = selectable && !excludedKeys.has(k);
+              return (
+                <TableRow key={k} className={!selectable ? "opacity-60" : ""}>
+                  <TableCell>
+                    <Checkbox
+                      checked={checked}
+                      disabled={!selectable}
+                      onCheckedChange={(v) => toggle(k, !!v)}
+                    />
+                  </TableCell>
+                  <TableCell className="font-medium text-sm">{c.name}</TableCell>
+                  <TableCell className="font-mono text-xs">
+                    {c.phone_e164 ?? <span className="text-destructive">{c.rawPhone}</span>}
+                  </TableCell>
+                  <TableCell className="text-xs">
+                    <div className="flex flex-wrap gap-1">
+                      {c.tags.slice(0, 3).map((t) => (
+                        <Badge key={t} variant="outline" className="text-[10px] px-1.5 py-0">{t}</Badge>
+                      ))}
+                      {c.tags.length > 3 && (
+                        <span className="text-muted-foreground">+{c.tags.length - 3}</span>
+                      )}
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-xs capitalize text-muted-foreground">{c.status.replace("_", " ")}</TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      </div>
+      {total > pageSize && (
+        <div className="flex items-center justify-between text-xs">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2"
+            onClick={() => setPage((p) => Math.max(0, p - 1))}
+            disabled={page === 0}
+          >
+            <ChevronLeft className="h-3.5 w-3.5 mr-1" /> Anterior
+          </Button>
+          <span className="text-muted-foreground">
+            Página {page + 1} de {pageCount} · {total} contato(s)
+          </span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2"
+            onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+            disabled={page >= pageCount - 1}
+          >
+            Próxima <ChevronRight className="h-3.5 w-3.5 ml-1" />
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
