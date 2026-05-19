@@ -27,6 +27,8 @@ const DEFAULTS = {
   timezone: "America/Sao_Paulo",
   auto_pause_outside_hours: true,
   auto_pause_on_all_channels_down: true,
+  batch_mode: false,
+  batch_pause_seconds: 60 as number | null,
 };
 
 export const getSendSettingsFn = createServerFn({ method: "GET" })
@@ -58,6 +60,8 @@ const settingsInput = z.object({
   timezone: z.string().min(1).max(64),
   auto_pause_outside_hours: z.boolean(),
   auto_pause_on_all_channels_down: z.boolean(),
+  batch_mode: z.boolean(),
+  batch_pause_seconds: z.number().int().min(0).max(86400).nullable(),
 });
 
 export const upsertSendSettingsFn = createServerFn({ method: "POST" })
