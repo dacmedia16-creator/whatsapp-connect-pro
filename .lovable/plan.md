@@ -1,31 +1,51 @@
 ## Diagnóstico
 
-O anexo está sendo salvo corretamente na campanha: a campanha `Teste` tem `media_url`, `media_filename` e `media_mime`, e seus itens foram enviados pela fila.
+Você criou a campanha **REMAX** (id `a10e7cba…`) às 13:46 BRT com 1 destinatário. Verifiquei no banco:
 
-O problema provável está no caminho de processamento manual usado pelo painel (`processQueueFn` em `src/lib/ziontalk.functions.ts`): ele envia `item.rendered_text` sem carregar nem passar a mídia da campanha para `zionSendMessage`. Já existe uma rotina mais nova em `src/lib/send/sender.server.ts` que carrega a mídia, mas o painel ainda chama o processamento antigo em algumas telas.
+- `campaigns.status = running` ✅
+- `campaign_recipients.status = queued` (1 linha) ✅
+- `message_queue`: **0 linhas** ❌
+- `send_logs` após 13:46: **nenhum** ❌
 
-## Plano de correção
+O canal está conectado, dentro da janela 09–18, com cota disponível. Ou seja: o envio nunca chegou ao ZionTalk porque **a fila nunca foi alimentada**.
 
-1. **Centralizar o envio da fila**
-   - Alterar `processQueueFn` para usar `createSenderContext` + `processQueueItem`, a mesma lógica usada pelo endpoint automático `/api/public/hooks/process-queue`.
-   - Isso evita dois caminhos diferentes de envio e garante que mídia, rotação de canais, limites e auditoria sigam uma única regra.
+## Causa raiz
 
-2. **Preservar o comportamento do painel**
-   - Manter o retorno com `sent`, `failed`, `skipped`, `rescheduled` e `totalProcessed`, para não quebrar `sending-panel.tsx` nem `campaigns.$campaignId.tsx`.
-   - Não alterar criação de campanhas, contatos, consentimento, autenticação, banco de dados ou regras de negócio.
+`createCampaignFn` (`src/lib/campaigns.functions.ts`) faz três coisas quando o usuário marca "Iniciar agora":
 
-3. **Garantir anexo no envio**
-   - Confirmar que `processQueueItem` busca `campaign.media_url/media_filename/media_mime` via `campaign_recipient_id -> campaign_id` e passa `media` para `zionSendMessage`.
-   - Se necessário, ajustar apenas o select da fila para incluir `recipient:campaign_recipients(id, campaign_id)`.
+1. Insere a campanha como `running`
+2. Insere as linhas em `campaign_recipients` como `queued`
+3. Persiste `campaign_send_settings`
 
-4. **Melhorar observabilidade do anexo**
-   - Ajustar o log de envio para registrar de forma segura quando houve tentativa com mídia, sem expor chave de API.
-   - Manter o corpo de resposta limitado como já está.
+**Nunca chama `enqueueCampaignFn`.** O cron `/api/public/hooks/process-queue` só processa o que está em `message_queue`, e essa tabela continua vazia até alguém abrir a tela da campanha e clicar em "Enfileirar" (ou usar o Painel de Envios). Por isso a campanha fica "running" para sempre sem disparar nada.
 
-5. **Validação**
-   - Rodar uma checagem focada nos arquivos alterados e consultar logs/dados da fila para confirmar que campanhas com `media_url` passam pelo caminho que inclui mídia.
+Campanhas anteriores funcionaram porque foram enfileiradas manualmente pela tela `/campaigns/$id` ou pelo painel.
 
-## Arquivos previstos
+## Correção proposta
 
-- `src/lib/ziontalk.functions.ts`
-- Possivelmente `src/lib/send/sender.server.ts` ou `src/lib/ziontalk.server.ts`, somente se for necessário para logging/compatibilidade do anexo.
+Fazer o `createCampaignFn` enfileirar automaticamente quando `initiate = true` e não houver `scheduledAt`. A lógica de enqueue já existe em `enqueueCampaignFn` — vou extraí-la para uma função interna reutilizável (sem mudar regras de negócio) e chamá-la nos dois pontos.
+
+### Passos
+
+1. **Extrair `enqueueCampaignCore(campaignId)`** em `src/lib/ziontalk.functions.ts`
+   - Move o corpo atual do `.handler` de `enqueueCampaignFn` para uma função normal exportada.
+   - `enqueueCampaignFn` continua existindo (com `requireSupabaseAuth` + checagem de role) e só delega para `enqueueCampaignCore`. Mantém compatibilidade com a tela da campanha e do painel.
+
+2. **Chamar o enqueue no `createCampaignFn`**
+   - Em `src/lib/campaigns.functions.ts`, após o `upsert` de `campaign_send_settings`, se `data.initiate && !data.scheduledAt`:
+     - `await enqueueCampaignCore(campaign.id)`
+     - Em caso de erro, marcar a campanha como `draft` de novo e propagar erro, para o usuário não ficar com status "running" sem fila.
+   - Quando há `scheduledAt`, manter o comportamento atual (status `scheduled`, sem enfileirar) — o cron pode enfileirar no horário futuramente, mas isso fica fora desse fix.
+
+3. **Backfill do envio que falhou agora**
+   - Após o deploy, basta abrir a campanha REMAX e clicar em "Enfileirar" uma vez — ou eu posso, se você quiser, disparar o enqueue manualmente via o endpoint de processamento. Confirmo isso na implementação.
+
+### Arquivos previstos
+
+- `src/lib/ziontalk.functions.ts` — extrair `enqueueCampaignCore`, manter `enqueueCampaignFn` como wrapper.
+- `src/lib/campaigns.functions.ts` — chamar `enqueueCampaignCore` ao criar com "Iniciar agora".
+
+### Fora de escopo
+
+- Sem mudanças em UI, RLS, schema, ZionTalk client ou cron.
+- Sem mexer em mídia/anexos — o caminho de envio já passa pelo `processQueueItem` (corrigido na rodada anterior) e inclui mídia corretamente assim que a fila for alimentada.
