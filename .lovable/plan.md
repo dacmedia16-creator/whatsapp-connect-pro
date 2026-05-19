@@ -1,53 +1,56 @@
 ## Problema
 
-Ao clicar em **Excluir** na campanha "Teste", o backend tenta apagar a linha de `campaigns`, mas a tabela `messages` (histórico de conversas na caixa de entrada) tem uma FK `messages.campaign_id → campaigns.id` **sem `ON DELETE`**. Como existem mensagens enviadas vinculadas à campanha, o Postgres bloqueia:
+O toast vermelho "JWT has expired" aparece quando o token de acesso do Supabase venceu (sessões duram 1h por padrão) e você clica em **Validar contatos** (ou qualquer outra ação que chame um serverFn).
 
-```
-update or delete on table "campaigns" violates foreign key constraint
-"messages_campaign_id_fkey" on table "messages"
-```
+Fluxo do bug:
+1. `attachSupabaseAuth` lê `supabase.auth.getSession()` e anexa o `access_token` atual no header `Authorization`.
+2. Se o token já expirou e o auto-refresh do Supabase ainda não rodou (aba ficou ociosa, máquina dormiu), o serverFn recebe um JWT vencido.
+3. O middleware `requireSupabaseAuth` rejeita → erro borbulha até o `toast.error` em `runPreview` mostrando a mensagem crua do Supabase.
 
-A rotina de exclusão hoje (`campaigns.index.tsx`) só limpa `message_queue`, `campaign_recipients` e `campaign_events` — esqueceu de `messages` (e provavelmente também de `send_logs`, que tem `campaign_id`).
-
-## Decisão de design
-
-Mensagens da caixa de entrada **não devem ser apagadas** junto com a campanha — elas pertencem à conversa do contato e o usuário precisa continuar vendo o histórico. Mesma lógica vale para `send_logs` (auditoria).
-
-Solução: alterar as FKs para **`ON DELETE SET NULL`** nas tabelas que são "histórico/auditoria", e manter `DELETE` em cascata apenas para tabelas operacionais da campanha.
+Hoje **não existe nenhum tratamento global** para sessão expirada — o usuário fica preso na tela vendo erro genérico em vez de ser mandado de volta pro login.
 
 ## Plano
 
-### 1. Migration — ajustar FKs
+### 1. Forçar refresh proativo no `attachSupabaseAuth`
 
-| Tabela | Coluna | Ação atual | Ação nova |
-|---|---|---|---|
-| `messages` | `campaign_id` | (nada → bloqueia) | `ON DELETE SET NULL` |
-| `send_logs` | `campaign_id` | verificar | `ON DELETE SET NULL` |
-| `campaign_recipients` | `campaign_id` | já tratado no código | `ON DELETE CASCADE` (defesa em profundidade) |
-| `campaign_events` | `campaign_id` | já tratado no código | `ON DELETE CASCADE` |
-| `message_queue` | `campaign_id` (via recipient) | já tratado | manter |
-| `campaign_send_settings` | `campaign_id` | verificar | `ON DELETE CASCADE` |
+Em `src/integrations/supabase/auth-attacher.ts`, antes de pegar o token:
 
-Drop + recreate de cada constraint com a regra apropriada.
+- Ler a `session` atual.
+- Se `expires_at` está a menos de ~60s do vencimento (ou já passou), chamar `supabase.auth.refreshSession()` e usar o novo token.
+- Se o refresh falhar (refresh_token inválido), seguir sem header — o servidor responde 401 e o passo 3 cuida.
 
-### 2. Simplificar `deleteCampaign` no frontend
+Isso resolve 90% dos casos: a próxima chamada a serverFn renova o token sozinha.
 
-Com as FKs corretas, basta:
+### 2. Listener global de expiração no `useAuth`
 
-```ts
-await supabase.from("campaigns").delete().eq("id", id);
-```
+Em `src/hooks/use-auth.tsx`, no `onAuthStateChange`, tratar os eventos:
 
-Remover os `delete` manuais de `message_queue` / `campaign_recipients` / `campaign_events` (a cascata do banco cuida). Manter apenas o do `message_queue` se preferir limpeza imediata; o resto fica redundante.
+- `TOKEN_REFRESHED` → silencioso (já funciona).
+- `SIGNED_OUT` → limpar estado (já funciona).
+- **Novo:** detectar erro de refresh (evento `SIGNED_OUT` disparado pelo Supabase quando refresh falha) → mostrar toast amigável "Sua sessão expirou, faça login novamente" e redirecionar pra `/login`.
 
-### 3. Renomear botão (opcional, UX)
+### 3. Handler de erro nos serverFns do cliente
 
-O título do diálogo é "Excluir campanha?" mas o usuário descreveu como "cancelar". Sugiro deixar claro na mensagem que a campanha será **excluída permanentemente** mas o **histórico de mensagens enviadas permanece na caixa de entrada**.
+Criar um helper `handleServerFnError(e)` (em `src/lib/server-fn-error.ts`) que:
+
+- Detecta strings `JWT expired`, `Unauthorized`, `No authorization header`.
+- Faz `supabase.auth.signOut()` + `navigate({ to: '/login' })` + toast "Sessão expirada, entre novamente."
+- Em outros erros, só repassa a mensagem original.
+
+Substituir o `toast.error(e.message ...)` em `runPreview` (e nos outros catches de serverFn da tela de campanhas, e idealmente nas outras telas) por esse helper.
 
 ### 4. Validação
 
-- Recriar uma campanha de teste, executar alguns envios, e clicar em Excluir → deve sumir da lista sem erro, e as mensagens continuam visíveis na Caixa de entrada (sem vínculo de campanha).
+- Forçar expiração (no DevTools, alterar `expires_at` no localStorage para o passado) e clicar em **Validar contatos** → deve renovar transparentemente.
+- Apagar o `refresh_token` do localStorage e clicar em **Validar** → deve redirecionar pro login com toast amigável, sem o erro vermelho cru.
 
-## Observação
+## Fora de escopo
 
-Não vou tocar em RLS, lógica de envio, ou settings nesta entrega — só a cadeia de exclusão.
+- Não vou mexer na lógica de envio nem nas configurações.
+- Não vou aumentar o tempo de expiração do JWT (config do projeto Supabase, fora da UI).
+
+## Detalhes técnicos
+
+- O Supabase JS já tem `autoRefreshToken: true` no client, mas só renova quando a aba está visível e ativa — não cobre o caso de aba dormindo. O refresh proativo no middleware do TanStack fecha esse gap.
+- `expires_at` na session é em segundos Unix; comparar com `Date.now()/1000`.
+- O helper de erro precisa rodar só no cliente (usa `window`/router).

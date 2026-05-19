@@ -28,6 +28,8 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
+import { ensureFreshSession } from "@/lib/auth-session";
+import { handleServerFnError } from "@/lib/server-fn-error";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { MethodCard } from "@/components/campaign/method-card";
@@ -313,6 +315,7 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
     previewAbortRef.current = ac;
     try {
       setPreviewLoading(true);
+      await ensureFreshSession();
       let res: { contacts: ResolvedContact[]; summary: ResolveSummary } | null = null;
       if (method === "list" && listIds.length) {
         res = await previewFn({ data: { method: "list", listIds }, signal: ac.signal });
@@ -338,7 +341,7 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
     } catch (e: any) {
       if (myReq !== previewReqIdRef.current) return; // stale, silencia
       if (e?.name === "AbortError" || ac.signal.aborted) return;
-      toast.error(e.message ?? "Falha ao calcular destinatários");
+      handleServerFnError(e, "Falha ao calcular destinatários");
     } finally {
       if (myReq === previewReqIdRef.current) setPreviewLoading(false);
     }
