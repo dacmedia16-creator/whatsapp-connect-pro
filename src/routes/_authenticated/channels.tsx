@@ -18,7 +18,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { useAuth } from "@/hooks/use-auth";
-import { Plus, Plug, Pause, Play, Trash2, KeyRound, Ban } from "lucide-react";
+import { Plus, Plug, Pause, Play, Trash2, KeyRound, Ban, Copy } from "lucide-react";
 import { toast } from "sonner";
 import { normalizePhoneE164, formatPhone } from "@/lib/phone";
 import { testChannelFn } from "@/lib/ziontalk.functions";
@@ -165,7 +165,8 @@ function ChannelsPage() {
           {channels?.length ? (
             <div className="divide-y">
               {channels.map((c) => (
-                <div key={c.id} className="flex items-center justify-between p-4">
+                <div key={c.id} className="p-4 space-y-3">
+                  <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-4 min-w-0">
                     <Plug className="h-5 w-5 text-muted-foreground shrink-0" />
                     <div className="min-w-0">
@@ -205,6 +206,8 @@ function ChannelsPage() {
                       </>
                     )}
                   </div>
+                  </div>
+                  {isAdmin && <WebhookUrlRow channelId={c.id} />}
                 </div>
               ))}
             </div>
