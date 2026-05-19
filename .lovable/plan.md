@@ -1,50 +1,26 @@
 ## Diagnóstico
 
-A campanha "Teste" foi criada com **3 contatos manuais** (audience_filter mostra `server_resolved.eligible: 3`). Os 3 destinatários foram inseridos em `campaign_recipients` às 03:40:43. **49 segundos depois (03:41:32)** mais **178 destinatários** foram adicionados — total 181.
-
-Esses 178 vieram quando você clicou em **"Iniciar envio"**, que chama `enqueueCampaignFn` em `src/lib/ziontalk.functions.ts` (linhas 470‑535). Essa função **ignora completamente** o `method` da campanha e os destinatários já resolvidos. Ela faz:
-
-```ts
-let q = supabaseAdmin.from("contacts")
-  .select(...).eq("consent", true).is("opt_out_at", null);
-if (filter.tags?.length) q = q.contains("tags", filter.tags);
-const { data: contacts } = await q;
-// upsert em campaign_recipients
-```
-
-Para `method = "manual"` (sem `filter.tags`), isso vira "pegue **todos** os contatos com consentimento" — exatamente os 178 antigos que vazaram, somados aos 3 manuais já presentes (deduplicados via `onConflict`), dando 181.
-
-A correção que fizemos antes em `createCampaignFn` resolveu a **criação**, mas o bug se repetiu no caminho do **enqueue** (clique em "Iniciar envio").
+Hoje na criação da campanha (etapa 1) existe um único campo "Agendamento" do tipo `datetime-local`. A regra é: **vazio = envio imediato**, preenchido = agendar. Isso fica confuso — não há um botão claro de "Enviar agora".
 
 ## Plano
 
-### 1. Corrigir `enqueueCampaignFn` (`src/lib/ziontalk.functions.ts`)
+Trocar o campo único por um **seletor explícito** com duas opções:
 
-Eliminar a re‑resolução de destinatários no enqueue. Os destinatários já foram resolvidos e validados pelo `createCampaignFn` (autoritativo) e estão em `campaign_recipients`. O enqueue só deve:
+- ⚡ **Enviar agora** (padrão) — limpa `scheduledAt`
+- 📅 **Agendar para...** — mostra o input `datetime-local`
 
-1. Carregar os `campaign_recipients` existentes da campanha (status `queued`).
-2. Carregar os `contacts` correspondentes (para name/phone/custom_fields usados na renderização).
-3. Validar canais e settings (mantém igual).
-4. Montar `message_queue` com rotação/delay (mantém igual).
-5. **Remover** o bloco que faz `supabase.from("contacts").select(...).eq("consent", true)` e o `upsert` em `campaign_recipients`.
+### Mudanças (apenas UI, em `src/routes/_authenticated/campaigns.index.tsx`)
 
-Se não houver `campaign_recipients` para a campanha, retornar `{ enqueued: 0, message: "Nenhum destinatário na campanha" }` em vez de criar do zero (criação só pode acontecer via `createCampaignFn`).
+1. No bloco da etapa 1 (linhas ~531‑540), substituir o campo único por um `RadioGroup` (ou dois botões segmentados) com as duas opções. Quando "Enviar agora" estiver selecionado, `scheduledAt` é forçado a `""`. Quando "Agendar para..." for selecionado, mostra o `Input datetime-local` abaixo.
+2. Manter o checkbox "Iniciar/agendar imediatamente após criar (rascunho)" na etapa 3 como está — ele controla outra coisa (criar como rascunho).
+3. Ajustar o texto do botão final (linha 904):
+   - Rascunho → "Salvar rascunho"
+   - Imediato → "Enviar agora"
+   - Agendado → "Agendar campanha"
+4. Resumo final (linha 852): manter "Imediato" / data formatada.
 
-Também atualizar `total_recipients` apenas se divergir, ou removê‑lo (já foi definido na criação) — evita reescrever.
+### Fora do escopo
 
-### 2. Limpar a campanha "Teste" atual (opcional, sob aprovação)
-
-Status atual: `done` com 181 destinatários, 0 enviados, 0 falhas. Opções:
-- **Não mexer** — está finalizada e nada foi enviado.
-- **Apagar** os 178 destinatários extras (`DELETE FROM campaign_recipients WHERE campaign_id='64351fe0...' AND contact_id NOT IN (<os 3 manuais>)`) — requer migration.
-
-Recomendo deixar como está, já que `status='done'` e progresso 0%.
-
-### 3. Validação manual após deploy
-
-Criar nova campanha manual com 2‑3 contatos → clicar "Iniciar envio" → verificar que `total_recipients` permanece 2‑3 e que `message_queue` recebe só esses.
-
-## Escopo
-
-- **In:** uma edição em `src/lib/ziontalk.functions.ts` (função `enqueueCampaignFn`).
-- **Out:** UI, criação de campanha (já corrigida), webhook, painel de envios, auth, RLS.
+- Nenhuma mudança no servidor (`createCampaignFn` já aceita `scheduledAt: null` como envio imediato).
+- Nenhuma mudança no enqueue ou fila.
+- Nenhuma mudança em settings de envio (delay, janela, rotação).
