@@ -215,6 +215,10 @@ export type Database = {
           created_by: string | null
           description: string | null
           id: string
+          media_filename: string | null
+          media_mime: string | null
+          media_type: string | null
+          media_url: string | null
           message_template: string
           name: string
           rate_per_min: number
@@ -232,6 +236,10 @@ export type Database = {
           created_by?: string | null
           description?: string | null
           id?: string
+          media_filename?: string | null
+          media_mime?: string | null
+          media_type?: string | null
+          media_url?: string | null
           message_template: string
           name: string
           rate_per_min?: number
@@ -249,6 +257,10 @@ export type Database = {
           created_by?: string | null
           description?: string | null
           id?: string
+          media_filename?: string | null
+          media_mime?: string | null
+          media_type?: string | null
+          media_url?: string | null
           message_template?: string
           name?: string
           rate_per_min?: number
