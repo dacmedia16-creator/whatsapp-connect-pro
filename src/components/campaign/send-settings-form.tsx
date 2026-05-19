@@ -33,7 +33,7 @@ export type SendSettingsState = {
 
 export const SEND_SETTINGS_DEFAULTS: SendSettingsState = {
   selected_channel_ids: [],
-  rotation_mode: "round_robin",
+  rotation_mode: "least_used",
   channel_priority: [],
   delay_seconds: 30,
   random_delay_min: null,
@@ -187,17 +187,20 @@ export function SendSettingsForm({ form, onChange, channels, showChannelSelectio
             onValueChange={(v) => set("rotation_mode", v as RotationMode)}
           >
             <label className="flex items-start gap-3 p-3 border rounded-md cursor-pointer">
-              <RadioGroupItem value="round_robin" />
+              <RadioGroupItem value="least_used" />
               <div>
-                <div className="text-sm font-medium">Round-robin</div>
-                <div className="text-xs text-muted-foreground">Alterna em ordem entre os canais.</div>
+                <div className="text-sm font-medium flex items-center gap-2">
+                  Menos usado
+                  <Badge variant="secondary" className="text-[10px]">Recomendado</Badge>
+                </div>
+                <div className="text-xs text-muted-foreground">Distribui igualmente: sempre escolhe o chip com menos envios no dia.</div>
               </div>
             </label>
             <label className="flex items-start gap-3 p-3 border rounded-md cursor-pointer">
-              <RadioGroupItem value="least_used" />
+              <RadioGroupItem value="round_robin" />
               <div>
-                <div className="text-sm font-medium">Menos usado</div>
-                <div className="text-xs text-muted-foreground">Prioriza canais com menos envios no dia.</div>
+                <div className="text-sm font-medium">Round-robin</div>
+                <div className="text-xs text-muted-foreground">Alterna em ordem entre os canais. Pode ficar desigual quando há limites ou pacing.</div>
               </div>
             </label>
             <label className="flex items-start gap-3 p-3 border rounded-md cursor-pointer">
