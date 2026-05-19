@@ -13,10 +13,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { useAuth } from "@/hooks/use-auth";
-import { Search, Send, StickyNote, MessageSquareText, Ban, Inbox as InboxIcon, Loader2, ArrowLeft, ArrowDown } from "lucide-react";
+import { Search, Send, StickyNote, MessageSquareText, Ban, Inbox as InboxIcon, Loader2, ArrowLeft, ArrowDown, ShieldCheck, ShieldOff } from "lucide-react";
 import { toast } from "sonner";
 import { sendMessageFn } from "@/lib/ziontalk.functions";
-import { assignConversationFn, updateConversationStatusFn, addInternalNoteFn, markConversationReadFn } from "@/lib/inbox.functions";
+import { assignConversationFn, updateConversationStatusFn, addInternalNoteFn, markConversationReadFn, setContactConsentFn } from "@/lib/inbox.functions";
 import { formatPhone } from "@/lib/phone";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -248,6 +248,7 @@ function ConversationPanel({ conv, currentUserId, role, onBack }: { conv: any; c
   const note = useServerFn(addInternalNoteFn);
   const assign = useServerFn(assignConversationFn);
   const setStatus = useServerFn(updateConversationStatusFn);
+  const setConsent = useServerFn(setContactConsentFn);
 
   const [draft, setDraft] = useState("");
   const [mode, setMode] = useState<"reply" | "note">("reply");
@@ -325,6 +326,16 @@ function ConversationPanel({ conv, currentUserId, role, onBack }: { conv: any; c
   const statusMut = useMutation({
     mutationFn: async (status: any) => setStatus({ data: { conversationId: conv.id, status } }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["inbox-conversations"] }),
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const consentMut = useMutation({
+    mutationFn: async (consent: boolean) =>
+      setConsent({ data: { contactId: conv.contact.id, consent } }),
+    onSuccess: (_d, consent) => {
+      qc.invalidateQueries({ queryKey: ["inbox-conversations"] });
+      toast.success(consent ? "Contato marcado como consentido" : "Consentimento revogado");
+    },
     onError: (e: Error) => toast.error(e.message),
   });
 
@@ -449,9 +460,27 @@ function ConversationPanel({ conv, currentUserId, role, onBack }: { conv: any; c
 
         <div className="border-t p-3 bg-card/30">
           {(optedOut || noConsent) && mode === "reply" && (
-            <div className="text-xs text-destructive flex items-center gap-1 mb-2">
-              <Ban className="h-3 w-3" />
-              {optedOut ? "Contato fez opt-out — envio bloqueado." : "Contato sem consentimento — envio bloqueado."}
+            <div className="text-xs text-destructive flex items-center gap-2 mb-2 flex-wrap">
+              <span className="inline-flex items-center gap-1">
+                <Ban className="h-3 w-3" />
+                {optedOut ? "Contato fez opt-out — envio bloqueado." : "Contato sem consentimento — envio bloqueado."}
+              </span>
+              {!optedOut && noConsent && canManage && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-6 text-xs"
+                  disabled={consentMut.isPending}
+                  onClick={() => {
+                    if (confirm("Liberar consentimento para este contato? Isso permitirá enviar respostas.")) {
+                      consentMut.mutate(true);
+                    }
+                  }}
+                >
+                  <ShieldCheck className="h-3 w-3 mr-1" />
+                  Liberar consentimento
+                </Button>
+              )}
             </div>
           )}
           <div className="flex items-center gap-2 mb-2">
@@ -521,12 +550,46 @@ function ConversationPanel({ conv, currentUserId, role, onBack }: { conv: any; c
         <Separator />
         <div className="space-y-1">
           <p className="text-xs text-muted-foreground">Consentimento</p>
-          {optedOut ? (
-            <Badge variant="outline" className="border-destructive text-destructive">Opt-out</Badge>
-          ) : conv.contact?.consent ? (
-            <Badge variant="outline" className="border-success text-success">Ativo</Badge>
-          ) : (
-            <Badge variant="outline">Pendente</Badge>
+          <div className="flex items-center gap-2 flex-wrap">
+            {optedOut ? (
+              <Badge variant="outline" className="border-destructive text-destructive">Opt-out</Badge>
+            ) : conv.contact?.consent ? (
+              <Badge variant="outline" className="border-success text-success">Ativo</Badge>
+            ) : (
+              <Badge variant="outline">Pendente</Badge>
+            )}
+          </div>
+          {canManage && !optedOut && !conv.contact?.consent && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-xs mt-1"
+              disabled={consentMut.isPending}
+              onClick={() => {
+                if (confirm("Liberar consentimento para este contato? Isso permitirá enviar respostas.")) {
+                  consentMut.mutate(true);
+                }
+              }}
+            >
+              <ShieldCheck className="h-3 w-3 mr-1" />
+              Marcar como consentido
+            </Button>
+          )}
+          {canManage && !optedOut && conv.contact?.consent && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 text-xs mt-1 text-muted-foreground"
+              disabled={consentMut.isPending}
+              onClick={() => {
+                if (confirm("Revogar consentimento? O contato voltará a ficar bloqueado para envios.")) {
+                  consentMut.mutate(false);
+                }
+              }}
+            >
+              <ShieldOff className="h-3 w-3 mr-1" />
+              Revogar consentimento
+            </Button>
           )}
         </div>
         {conv.contact?.tags?.length > 0 && (

@@ -106,6 +106,44 @@ export const markConversationReadFn = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
+export const setContactConsentFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) =>
+    z.object({
+      contactId: z.string().uuid(),
+      consent: z.boolean(),
+    }).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const roles = await rolesFor(context.userId);
+    if (!roles.has("admin") && !roles.has("gestor")) {
+      throw new Error("Apenas admin ou gestor pode alterar o consentimento");
+    }
+    const { data: contact, error: cErr } = await supabaseAdmin
+      .from("contacts")
+      .select("id, opt_out_at")
+      .eq("id", data.contactId)
+      .maybeSingle();
+    if (cErr) throw new Error(cErr.message);
+    if (!contact) throw new Error("Contato não encontrado");
+
+    if (data.consent && contact.opt_out_at) {
+      throw new Error("Contato fez opt-out. Remova o opt-out antes de liberar o consentimento.");
+    }
+
+    const nowIso = new Date().toISOString();
+    const { error } = await supabaseAdmin
+      .from("contacts")
+      .update({
+        consent: data.consent,
+        consent_at: data.consent ? nowIso : null,
+        updated_at: nowIso,
+      })
+      .eq("id", data.contactId);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
 export const audiencePreviewFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) =>
