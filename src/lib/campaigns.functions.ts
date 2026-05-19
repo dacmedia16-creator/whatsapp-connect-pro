@@ -205,39 +205,104 @@ export const createCampaignFn = createServerFn({ method: "POST" })
       }
     }
 
-    const phones = data.recipients.map((r) => r.phone_e164);
-    const { data: existing } = await supabaseAdmin
-      .from("contacts")
-      .select("id, phone_e164, opt_out_at, consent")
-      .in("phone_e164", phones);
-    const exMap = new Map<string, { id: string; opt_out_at: string | null; consent: boolean }>();
-    (existing ?? []).forEach((c: any) => exMap.set(c.phone_e164, c));
+    // ============================================================
+    // Resolução autoritativa de destinatários no servidor.
+    // Para "list" e "tags" RECARREGAMOS a fonte do banco — ignoramos
+    // o array do cliente para impedir vazamento de contatos antigos
+    // que tenham ficado no estado da UI.
+    // ============================================================
+    const clientPhones = new Set(data.recipients.map((r) => r.phone_e164));
+    let contactIds: string[] = [];
+    let serverFound = 0;
+    let serverEligible = 0;
 
-    const contactIds: string[] = [];
-    for (const r of data.recipients) {
-      const ex = exMap.get(r.phone_e164);
-      if (ex) {
-        if (ex.opt_out_at) continue;
-        contactIds.push(ex.id);
-      } else {
-        if (!r.consent) continue;
-        const { data: ins, error } = await supabaseAdmin
-          .from("contacts")
-          .insert({
-            name: r.name,
-            phone_e164: r.phone_e164,
-            consent: true,
-            consent_at: new Date().toISOString(),
-            tags: r.tags ?? [],
-            source: data.method,
-            created_by: context.userId,
-          })
-          .select("id")
-          .single();
-        if (error || !ins) continue;
-        contactIds.push(ins.id);
+    if (data.method === "list") {
+      const listIds = data.methodSummary?.listIds ?? [];
+      if (!listIds.length) throw new Error("Nenhuma lista selecionada");
+      const { data: items, error: itErr } = await supabaseAdmin
+        .from("contact_list_items")
+        .select("contact:contacts(id, phone_e164, consent, opt_out_at)")
+        .in("list_id", listIds);
+      if (itErr) throw new Error(itErr.message);
+      const byId = new Map<string, { id: string; phone_e164: string | null; consent: boolean; opt_out_at: string | null }>();
+      (items ?? []).forEach((it: any) => {
+        const c = it.contact;
+        if (c && c.id && !byId.has(c.id)) byId.set(c.id, c);
+      });
+      serverFound = byId.size;
+      for (const c of byId.values()) {
+        if (!c.phone_e164) continue;
+        if (c.opt_out_at) continue;
+        if (!c.consent) continue;
+        serverEligible++;
+        contactIds.push(c.id);
+      }
+    } else if (data.method === "tags") {
+      const tags = data.methodSummary?.tags ?? [];
+      const match = data.methodSummary?.match ?? "any";
+      if (!tags.length) throw new Error("Nenhuma etiqueta selecionada");
+      let q = supabaseAdmin
+        .from("contacts")
+        .select("id, phone_e164, consent, opt_out_at")
+        .limit(5000);
+      if (match === "all") q = q.contains("tags", tags);
+      else q = q.overlaps("tags", tags);
+      const { data: contacts, error: ctErr } = await q;
+      if (ctErr) throw new Error(ctErr.message);
+      const byId = new Map<string, any>();
+      (contacts ?? []).forEach((c: any) => { if (c?.id && !byId.has(c.id)) byId.set(c.id, c); });
+      serverFound = byId.size;
+      for (const c of byId.values()) {
+        if (!c.phone_e164) continue;
+        if (c.opt_out_at) continue;
+        if (!c.consent) continue;
+        serverEligible++;
+        contactIds.push(c.id);
+      }
+    } else {
+      // import / manual: não há fonte canônica no banco — usamos o que
+      // veio do cliente, mas garantindo que cada telefone foi explicitamente
+      // listado (já está, por construção) e validando consent/opt-out
+      // contra registros existentes.
+      const phones = data.recipients.map((r) => r.phone_e164);
+      const { data: existing } = await supabaseAdmin
+        .from("contacts")
+        .select("id, phone_e164, opt_out_at, consent")
+        .in("phone_e164", phones);
+      const exMap = new Map<string, { id: string; opt_out_at: string | null; consent: boolean }>();
+      (existing ?? []).forEach((c: any) => exMap.set(c.phone_e164, c));
+      serverFound = data.recipients.length;
+      for (const r of data.recipients) {
+        const ex = exMap.get(r.phone_e164);
+        if (ex) {
+          if (ex.opt_out_at) continue;
+          serverEligible++;
+          contactIds.push(ex.id);
+        } else {
+          if (!r.consent) continue;
+          const { data: ins, error } = await supabaseAdmin
+            .from("contacts")
+            .insert({
+              name: r.name,
+              phone_e164: r.phone_e164,
+              consent: true,
+              consent_at: new Date().toISOString(),
+              tags: r.tags ?? [],
+              source: data.method,
+              created_by: context.userId,
+            })
+            .select("id")
+            .single();
+          if (error || !ins) continue;
+          serverEligible++;
+          contactIds.push(ins.id);
+        }
       }
     }
+
+    // dedupe final por contact_id
+    contactIds = Array.from(new Set(contactIds));
+    const clientCount = clientPhones.size;
 
     if (contactIds.length === 0) throw new Error("Nenhum contato elegível após validação");
 
