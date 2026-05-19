@@ -88,11 +88,15 @@ export const Route = createFileRoute("/api/public/webhooks/ziontalk")({
           contactId = newContact.id;
         }
 
-        // Identifica/cria conversa
-        let conversationQ = supabaseAdmin
-          .from("conversations").select("id, unread_count").eq("contact_id", contactId);
-        if (channelId) conversationQ = conversationQ.eq("channel_id", channelId);
-        const { data: existingConv } = await conversationQ.maybeSingle();
+        // Identifica/cria conversa — busca a mais recente do contato (tolerante
+        // a duplicatas e a conversas antigas com channel_id null)
+        const { data: convs } = await supabaseAdmin
+          .from("conversations")
+          .select("id, unread_count, channel_id")
+          .eq("contact_id", contactId)
+          .order("last_message_at", { ascending: false })
+          .limit(1);
+        const existingConv = convs?.[0];
         let conversationId = existingConv?.id;
         if (!conversationId) {
           const { data: newConv, error } = await supabaseAdmin
@@ -108,13 +112,12 @@ export const Route = createFileRoute("/api/public/webhooks/ziontalk")({
           }
           conversationId = newConv.id;
         } else {
-          await supabaseAdmin
-            .from("conversations")
-            .update({
-              last_message_at: new Date().toISOString(),
-              unread_count: (existingConv?.unread_count ?? 0) + 1,
-            })
-            .eq("id", conversationId);
+          const patch: Record<string, unknown> = {
+            last_message_at: new Date().toISOString(),
+            unread_count: (existingConv?.unread_count ?? 0) + 1,
+          };
+          if (channelId && !existingConv?.channel_id) patch.channel_id = channelId;
+          await supabaseAdmin.from("conversations").update(patch).eq("id", conversationId);
         }
 
         const { error: msgErr } = await supabaseAdmin.from("messages").insert({
