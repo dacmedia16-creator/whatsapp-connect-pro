@@ -445,6 +445,7 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
         (r, i) =>
           r.status === "eligible" &&
           r.phone_e164 &&
+          (!method || r.source === method) &&
           !excludedKeys.has(keyFor(r, i)),
       ),
     [resolved, excludedKeys],
@@ -571,6 +572,25 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
                       {eligibleCount === 1 ? "1 contato" : `${eligibleCount} contatos`}
                     </Badge>
                   </div>
+
+                  {resolved.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-2 text-xs rounded-md border bg-muted/20 px-3 py-2">
+                      <span className="text-muted-foreground">Fonte:</span>
+                      <span className="font-medium">{summary.found}</span>
+                      <span className="text-muted-foreground">→ Elegíveis:</span>
+                      <span className="font-medium text-success">{summary.eligible}</span>
+                      <span className="text-muted-foreground">→ Na fila:</span>
+                      <span className="font-medium">{eligibleCount}</span>
+                      {(summary.blockedNoConsent + summary.blockedOptOut + summary.invalidPhone + summary.duplicates) > 0 && (
+                        <span className="text-muted-foreground">
+                          {" "}({summary.blockedNoConsent > 0 && `-${summary.blockedNoConsent} sem consentimento`}
+                          {summary.blockedOptOut > 0 && `${summary.blockedNoConsent > 0 ? ", " : ""}-${summary.blockedOptOut} opt-out`}
+                          {summary.invalidPhone > 0 && `${(summary.blockedNoConsent + summary.blockedOptOut) > 0 ? ", " : ""}-${summary.invalidPhone} telefone inválido`}
+                          {summary.duplicates > 0 && `${(summary.blockedNoConsent + summary.blockedOptOut + summary.invalidPhone) > 0 ? ", " : ""}-${summary.duplicates} duplicados`})
+                        </span>
+                      )}
+                    </div>
+                  )}
 
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                     <MethodCard icon={List} title="Listas de Contatos" subtitle="Usar listas pré-definidas"
