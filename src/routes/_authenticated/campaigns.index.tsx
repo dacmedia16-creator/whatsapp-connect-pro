@@ -232,6 +232,9 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
   // results
   const [resolved, setResolved] = useState<ResolvedContact[]>([]);
   const [summary, setSummary] = useState<ResolveSummary>(emptySummary());
+  const [excludedKeys, setExcludedKeys] = useState<Set<string>>(new Set());
+  const [recipientsPage, setRecipientsPage] = useState(0);
+  const RECIPIENTS_PAGE_SIZE = 10;
 
   // step 2
   const [message, setMessage] = useState("Olá {{nome}}, ");
@@ -249,6 +252,7 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
     setListIds([]); setTagSelection([]); setTagMatch("any");
     setManualRows([]); setImportedRows([]);
     setResolved([]); setSummary(emptySummary());
+    setExcludedKeys(new Set()); setRecipientsPage(0);
     setMessage("Olá {{nome}}, "); setMedia(null); setInitiate(true);
     setSendSettings(SEND_SETTINGS_DEFAULTS);
   };
