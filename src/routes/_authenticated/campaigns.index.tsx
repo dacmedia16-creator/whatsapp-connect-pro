@@ -235,6 +235,7 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
   const [excludedKeys, setExcludedKeys] = useState<Set<string>>(new Set());
   const [recipientsPage, setRecipientsPage] = useState(0);
   const RECIPIENTS_PAGE_SIZE = 10;
+  const [previewLoading, setPreviewLoading] = useState(false);
 
   // step 2
   const [message, setMessage] = useState("Olá {{nome}}, ");
@@ -308,6 +309,7 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
 
   async function runPreview() {
     try {
+      setPreviewLoading(true);
       let res: { contacts: ResolvedContact[]; summary: ResolveSummary } | null = null;
       if (method === "list" && listIds.length) {
         res = await previewFn({ data: { method: "list", listIds } });
@@ -331,8 +333,25 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
       }
     } catch (e: any) {
       toast.error(e.message ?? "Falha ao calcular destinatários");
+    } finally {
+      setPreviewLoading(false);
     }
   }
+
+  // Auto-carregar contatos quando a seleção de listas mudar (modo "list").
+  useEffect(() => {
+    if (method !== "list") return;
+    if (listIds.length === 0) {
+      setResolved([]);
+      setSummary(emptySummary());
+      setExcludedKeys(new Set());
+      setRecipientsPage(0);
+      return;
+    }
+    const t = setTimeout(() => { runPreview(); }, 250);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [method, listIds.join("|")]);
 
   // Manual form
   const [mName, setMName] = useState("");
