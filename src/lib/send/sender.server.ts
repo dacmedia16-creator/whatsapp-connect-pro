@@ -11,6 +11,7 @@ export type ProcessOutcome = "sent" | "failed" | "rescheduled" | "skipped";
 export type SenderContext = SelectorContext & {
   secret: string | undefined;
   keyCache: Map<string, string | null>;
+  mediaCache: Map<string, { url: string; filename: string; mime: string } | null>;
 };
 
 export function createSenderContext(secret: string | undefined): SenderContext {
@@ -21,6 +22,7 @@ export function createSenderContext(secret: string | undefined): SenderContext {
     today: new Date().toISOString().slice(0, 10),
     secret,
     keyCache: new Map(),
+    mediaCache: new Map(),
   };
 }
 
@@ -135,9 +137,31 @@ export async function processQueueItem(item: any, ctx: SenderContext): Promise<P
     return "failed";
   }
 
+  // Carrega mídia da campanha (se houver) com cache por campanha
+  let media: { url: string; filename: string; mime: string } | null = null;
+  if (campaignId) {
+    if (ctx.mediaCache.has(campaignId)) {
+      media = ctx.mediaCache.get(campaignId) ?? null;
+    } else {
+      const { data: camp } = await supabaseAdmin
+        .from("campaigns")
+        .select("media_url, media_filename, media_mime")
+        .eq("id", campaignId)
+        .maybeSingle();
+      media = camp?.media_url
+        ? {
+            url: camp.media_url as string,
+            filename: (camp.media_filename as string) || "anexo",
+            mime: (camp.media_mime as string) || "application/octet-stream",
+          }
+        : null;
+      ctx.mediaCache.set(campaignId, media);
+    }
+  }
+
   // (6) Envio
   const result = await zionSendMessage({
-    apiKey, phone: ct.phone_e164, msg: item.rendered_text,
+    apiKey, phone: ct.phone_e164, msg: item.rendered_text, media,
   });
 
   // (8) Auditoria
