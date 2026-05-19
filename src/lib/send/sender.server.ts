@@ -13,6 +13,7 @@ export type SenderContext = SelectorContext & {
   keyCache: Map<string, string | null>;
   mediaCache: Map<string, { url: string; filename: string; mime: string } | null>;
   finishChecked: Set<string>;
+  batchPushed: Set<string>;
 };
 
 export function createSenderContext(secret: string | undefined): SenderContext {
@@ -25,6 +26,7 @@ export function createSenderContext(secret: string | undefined): SenderContext {
     keyCache: new Map(),
     mediaCache: new Map(),
     finishChecked: new Set(),
+    batchPushed: new Set(),
   };
 }
 
@@ -55,6 +57,46 @@ async function pushNextScheduledFor(channelId: string, nextAvailableMs: number) 
   if (next?.id) {
     await supabaseAdmin.from("message_queue")
       .update({ scheduled_for: nextIso }).eq("id", next.id);
+  }
+}
+
+// Modo lote sincronizado: empurra o PRÓXIMO item pendente de CADA canal
+// selecionado da campanha para o mesmo instante futuro, garantindo que o
+// próximo "lote" dispare em paralelo após a pausa configurada.
+async function pushBatchScheduledFor(
+  ctx: SenderContext,
+  campaignId: string,
+  channelIds: string[],
+  pauseSeconds: number,
+) {
+  if (ctx.batchPushed.has(campaignId)) return;
+  ctx.batchPushed.add(campaignId);
+
+  const nextIso = new Date(Date.now() + Math.max(0, pauseSeconds) * 1000).toISOString();
+
+  const { data: recs } = await supabaseAdmin
+    .from("campaign_recipients")
+    .select("id")
+    .eq("campaign_id", campaignId)
+    .eq("status", "queued");
+  const recIds = (recs ?? []).map((r: any) => r.id);
+  if (!recIds.length) return;
+
+  for (const cid of channelIds) {
+    const { data: next } = await supabaseAdmin
+      .from("message_queue")
+      .select("id")
+      .eq("channel_id", cid)
+      .eq("status", "pending")
+      .in("campaign_recipient_id", recIds)
+      .lt("scheduled_for", nextIso)
+      .order("scheduled_for", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (next?.id) {
+      await supabaseAdmin.from("message_queue")
+        .update({ scheduled_for: nextIso }).eq("id", next.id);
+    }
   }
 }
 
@@ -268,8 +310,18 @@ export async function processQueueItem(item: any, ctx: SenderContext): Promise<P
     }).eq("id", ch.id);
     ctx.channelsCache.set(ch.id, { ...ch, sent_today: sentToday + 1, sent_today_date: ctx.today });
 
-    // Pacing: empurra o próximo item pendente desse chip para respeitar o delay.
-    if (settings && (settings.delay_seconds > 0 || settings.random_delay_max > 0)) {
+    // Pacing: dois modos possíveis.
+    if (settings?.batch_mode && campaignId) {
+      // Lote sincronizado: empurra o próximo item de TODOS os canais
+      // da campanha para o mesmo instante (agora + pausa).
+      const channelIds: string[] = (settings.selected_channel_ids ?? []).filter(Boolean);
+      await pushBatchScheduledFor(
+        ctx, campaignId,
+        channelIds.length ? channelIds : [ch.id],
+        Number(settings.batch_pause_seconds ?? 60) || 0,
+      );
+    } else if (settings && (settings.delay_seconds > 0 || settings.random_delay_max > 0)) {
+      // Modo padrão: cada chip respeita seu próprio delay.
       await pushNextScheduledFor(ch.id, computeNextAvailable(settings));
     }
 

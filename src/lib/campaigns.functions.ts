@@ -168,6 +168,8 @@ const createInput = z.object({
     timezone: z.string().min(1).max(64),
     auto_pause_outside_hours: z.boolean(),
     auto_pause_on_all_channels_down: z.boolean(),
+    batch_mode: z.boolean().optional(),
+    batch_pause_seconds: z.number().int().min(0).max(86400).nullable().optional(),
   }).optional(),
   media: z.object({
     url: z.string().url().max(2048),
@@ -379,6 +381,8 @@ export const createCampaignFn = createServerFn({ method: "POST" })
       timezone: s?.timezone ?? "America/Sao_Paulo",
       auto_pause_outside_hours: s?.auto_pause_outside_hours ?? true,
       auto_pause_on_all_channels_down: s?.auto_pause_on_all_channels_down ?? true,
+      batch_mode: s?.batch_mode ?? false,
+      batch_pause_seconds: s?.batch_pause_seconds ?? null,
     };
     const { error: sErr } = await supabaseAdmin
       .from("campaign_send_settings")

@@ -889,6 +889,7 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
                 onChange={setSendSettings}
                 channels={channels.filter((c: any) => channelIds.includes(c.id))}
                 showChannelSelection={false}
+                totalRecipients={summary.eligible}
               />
               {settingsError && (
                 <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-xs text-destructive">

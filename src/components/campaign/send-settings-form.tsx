@@ -8,7 +8,7 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Separator } from "@/components/ui/separator";
-import { ArrowUp, ArrowDown, Smartphone } from "lucide-react";
+import { ArrowUp, ArrowDown, Smartphone, Clock, Layers } from "lucide-react";
 import { formatPhone } from "@/lib/phone";
 
 export type RotationMode = "round_robin" | "least_used" | "manual_priority";
@@ -29,6 +29,8 @@ export type SendSettingsState = {
   timezone: string;
   auto_pause_outside_hours: boolean;
   auto_pause_on_all_channels_down: boolean;
+  batch_mode: boolean;
+  batch_pause_seconds: number | null;
 };
 
 export const SEND_SETTINGS_DEFAULTS: SendSettingsState = {
@@ -47,6 +49,8 @@ export const SEND_SETTINGS_DEFAULTS: SendSettingsState = {
   timezone: "America/Sao_Paulo",
   auto_pause_outside_hours: true,
   auto_pause_on_all_channels_down: true,
+  batch_mode: false,
+  batch_pause_seconds: 60,
 };
 
 export const WEEKDAYS = [
@@ -88,6 +92,9 @@ export function validateSendSettings(form: SendSettingsState): string | null {
     return "Horário inicial deve ser menor que o final.";
   }
   if (!form.allowed_weekdays.length) return "Selecione ao menos 1 dia da semana.";
+  if (form.batch_mode && (form.batch_pause_seconds == null || form.batch_pause_seconds < 0)) {
+    return "Pausa entre lotes deve ser zero ou maior.";
+  }
   return null;
 }
 
@@ -96,9 +103,50 @@ type Props = {
   onChange: (next: SendSettingsState) => void;
   channels: ChannelOption[];
   showChannelSelection?: boolean;
+  totalRecipients?: number;
 };
 
-export function SendSettingsForm({ form, onChange, channels, showChannelSelection = true }: Props) {
+function formatDuration(minutes: number): string {
+  if (!Number.isFinite(minutes) || minutes <= 0) return "—";
+  if (minutes < 1) return "menos de 1 min";
+  const h = Math.floor(minutes / 60);
+  const m = Math.round(minutes % 60);
+  if (h === 0) return `${m} min`;
+  if (m === 0) return `${h}h`;
+  return `${h}h ${m}min`;
+}
+
+function estimateDuration(form: SendSettingsState, totalRecipients: number) {
+  const n = Math.max(1, form.selected_channel_ids.length || 1);
+  const min = Number(form.random_delay_min);
+  const max = Number(form.random_delay_max);
+  const delayMed = Number.isFinite(min) && Number.isFinite(max) && max >= min && max > 0
+    ? (min + max) / 2
+    : Math.max(0, form.delay_seconds);
+
+  let ratePerMin: number;
+  if (form.batch_mode) {
+    // 1 lote = N envios (paralelos), espaçados por batch_pause_seconds
+    const pause = Math.max(1, form.batch_pause_seconds ?? 60);
+    ratePerMin = (60 / pause) * n;
+  } else {
+    const perChip = 60 / Math.max(delayMed, 1);
+    ratePerMin = perChip * n;
+  }
+  // limite pelo teto de mensagens/min global
+  ratePerMin = Math.min(ratePerMin, form.max_per_minute);
+  if (ratePerMin <= 0) return { minutes: 0, ratePerMin: 0, channels: n };
+
+  return {
+    minutes: totalRecipients / ratePerMin,
+    ratePerMin,
+    channels: n,
+  };
+}
+
+export function SendSettingsForm({
+  form, onChange, channels, showChannelSelection = true, totalRecipients,
+}: Props) {
   const set = <K extends keyof SendSettingsState>(k: K, v: SendSettingsState[K]) =>
     onChange({ ...form, [k]: v });
 
@@ -129,8 +177,33 @@ export function SendSettingsForm({ form, onChange, channels, showChannelSelectio
 
   const orderedPriority = form.channel_priority.filter((id) => form.selected_channel_ids.includes(id));
 
+  const showEstimate = typeof totalRecipients === "number" && totalRecipients > 0;
+  const est = showEstimate ? estimateDuration(form, totalRecipients!) : null;
+
   return (
     <div className="space-y-5">
+      {showEstimate && est && (
+        <Card className="border-primary/30 bg-primary/5">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Clock className="h-4 w-4 text-primary" /> Estimativa de envio
+            </CardTitle>
+            <CardDescription>
+              Tempo corrido (não considera pausas fora do horário).
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-semibold tracking-tight">
+              ≈ {formatDuration(est.minutes)}
+            </div>
+            <div className="text-xs text-muted-foreground mt-1">
+              ~ {est.ratePerMin.toFixed(1)} msg/min · {est.channels} {est.channels === 1 ? "chip" : "chips"} · {totalRecipients} destinatários
+              {form.batch_mode && " · modo lote sincronizado"}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {showChannelSelection && (
         <Card>
           <CardHeader>
@@ -282,6 +355,46 @@ export function SendSettingsForm({ form, onChange, channels, showChannelSelectio
               onChange={(e) => set("max_per_day_per_channel", Number(e.target.value) || 1)} />
             <p className="text-xs text-muted-foreground">Aplica-se a cada canal selecionado individualmente.</p>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <Layers className="h-4 w-4" /> Lotes sincronizados
+          </CardTitle>
+          <CardDescription>
+            Quando ligado, todos os canais disparam ao mesmo tempo (1 mensagem cada), aguardam a pausa, e disparam o próximo lote.
+            Quando desligado, cada chip segue seu próprio relógio (throughput máximo).
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between p-3 border rounded-md">
+            <div>
+              <Label className="text-sm">Sincronizar lotes paralelos</Label>
+              <p className="text-xs text-muted-foreground">
+                Padrão desligado. Ligar dá ritmo previsível, mas reduz a velocidade total.
+              </p>
+            </div>
+            <Switch
+              checked={form.batch_mode}
+              onCheckedChange={(v) => set("batch_mode", v)}
+            />
+          </div>
+          {form.batch_mode && (
+            <div className="space-y-1">
+              <Label>Pausa entre lotes (segundos)</Label>
+              <Input
+                type="number"
+                min={0}
+                value={form.batch_pause_seconds ?? 60}
+                onChange={(e) => set("batch_pause_seconds", e.target.value === "" ? null : Number(e.target.value))}
+              />
+              <p className="text-xs text-muted-foreground">
+                Tempo de espera entre uma rajada e a próxima. Com {form.selected_channel_ids.length || "N"} chips, cada rajada envia {form.selected_channel_ids.length || "N"} mensagens ao mesmo tempo.
+              </p>
+            </div>
+          )}
         </CardContent>
       </Card>
 
