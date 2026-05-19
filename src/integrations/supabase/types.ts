@@ -157,6 +157,8 @@ export type Database = {
           allowed_weekdays: number[]
           auto_pause_on_all_channels_down: boolean
           auto_pause_outside_hours: boolean
+          batch_mode: boolean
+          batch_pause_seconds: number | null
           campaign_id: string
           channel_priority: string[]
           created_at: string
@@ -177,6 +179,8 @@ export type Database = {
           allowed_weekdays?: number[]
           auto_pause_on_all_channels_down?: boolean
           auto_pause_outside_hours?: boolean
+          batch_mode?: boolean
+          batch_pause_seconds?: number | null
           campaign_id: string
           channel_priority?: string[]
           created_at?: string
@@ -197,6 +201,8 @@ export type Database = {
           allowed_weekdays?: number[]
           auto_pause_on_all_channels_down?: boolean
           auto_pause_outside_hours?: boolean
+          batch_mode?: boolean
+          batch_pause_seconds?: number | null
           campaign_id?: string
           channel_priority?: string[]
           created_at?: string

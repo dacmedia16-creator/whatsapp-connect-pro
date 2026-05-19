@@ -1,51 +1,91 @@
-# Marcar campanha como Concluída automaticamente
+# Melhorar controle de delay e previsibilidade dos envios
 
-## Diagnóstico
+## O que muda pra você
 
-Olhando no banco, as duas campanhas estão de fato terminadas:
+Duas adições no formulário de configuração de envio da campanha:
 
-- **REMAX - Visita Prova**: 30 de 30 enviados, 0 na fila → status ainda `running`
-- **remax 2**: 3 de 3 enviados, 0 na fila → status ainda `running`
+### 1. Previsão de duração (sempre visível)
 
-O motivo é simples: **não existe nenhum código que mude o status para `done` automaticamente**. Hoje o `done` só acontece se o usuário clicar manualmente no botão "Finalizar" (em `campaigns.$campaignId.tsx` e `sending-panel.tsx`). O cron de envio (`sender.server.ts`) só lê `done` para parar de enviar — nunca grava.
+Um card no topo do formulário mostrando, em tempo real, conforme você mexe nos sliders:
 
-## O que vou fazer
-
-### 1. Auto-finalizar ao terminar o último envio
-
-Em `src/lib/send/sender.server.ts`, ao final de `processQueueItem` quando o envio é bem-sucedido (ou quando um recipient vai para `failed` definitivo após 3 tentativas), checar se ainda restam destinatários pendentes da campanha:
-
-```sql
-select count(*) from campaign_recipients
-where campaign_id = $1 and status = 'queued'
+```
+Estimativa
+≈ 2h 15min de envio efetivo
+~ 8 mensagens por minuto · 4 chips ativos · 480 destinatários
 ```
 
-Se `count = 0` **e** não há itens em `message_queue` com `status in ('pending','processing')` para essa campanha, marcar `campaigns.status = 'done'`.
+Recalcula automaticamente quando você muda: nº de canais selecionados, delay, delay aleatório, `max_per_minute`, `max_per_hora`. **Sem considerar janela horária nem pausas** — é tempo corrido de envio puro, como você pediu.
 
-Para evitar custo a cada envio, só rodar essa checagem quando o item processado for de campanha (já temos `campaignId`) e o resultado foi `sent` ou `failed`-final. Cache simples por batch (`Set<string>` em `SenderContext`) para não checar a mesma campanha mais de uma vez por execução do cron.
+### 2. Delay global entre lotes (novo campo opcional)
 
-### 2. Backfill das duas campanhas atuais
+Hoje cada chip tem seu próprio relógio: começa, dispara, espera seus 30s, dispara de novo. Eles dessincronizam rapidamente. O novo campo permite forçar o ritmo "rajada paralela":
 
-Via insert tool, atualizar `REMAX - Visita Prova` e `remax 2` para `status = 'done'` agora, já que ambas estão 100% concluídas.
+```
+[ ] Sincronizar lotes paralelos
+    Dispara N mensagens ao mesmo tempo (uma por chip), espera, repete.
+    
+    Tamanho do lote: [4] (= nº de canais selecionados, sugerido)
+    Pausa entre lotes: [60] segundos
+```
 
-### 3. UI (sem mudança)
+Quando **desligado** (padrão): comportamento atual — cada chip respeita seu próprio `delay_seconds`, throughput máximo.
 
-A página `campaigns.index.tsx` já tem o badge "Concluída" mapeado para o status `done` — vai aparecer sozinho assim que o status mudar. Nada a fazer no front.
+Quando **ligado**: o cron agrupa os envios em lotes do tamanho configurado e empurra o próximo lote inteiro para `agora + pausa_entre_lotes`. Mais lento e mais previsível.
 
-## Detalhes técnicos
+## Como vai funcionar por trás
 
-- **Arquivo principal**: `src/lib/send/sender.server.ts`
-  - Adicionar helper `maybeFinishCampaign(ctx, campaignId)` que faz as duas contagens e o update.
-  - Chamar após o ramo `result.ok` (depois de atualizar `campaign_recipients` para `sent`) e no ramo de falha quando `tooMany === true`.
-  - Adicionar `finishedCheckedCampaigns: Set<string>` ao `SenderContext`.
-- **Backfill**: `UPDATE campaigns SET status='done' WHERE id IN ('ab34583a-…','1297e253-…')`.
-- **Sem mudança de schema**: o enum `campaign_status` já tem `done`.
+### Estimativa (frontend, puro cálculo)
 
-## Validação
+Em `src/components/campaign/send-settings-form.tsx`, recebe `totalRecipients` via prop e renderiza um novo card no topo. Fórmula:
 
-- Após implementar e rodar o backfill, as duas linhas em `/campaigns` devem aparecer com o badge **Concluída** em vez de **Em execução**.
-- Próxima campanha nova: ao terminar o último envio, o status deve virar `done` automaticamente dentro do mesmo tick do cron.
+```ts
+const n = selected_channel_ids.length || 1;
+const delayMed = random_delay_min && random_delay_max
+  ? (random_delay_min + random_delay_max) / 2
+  : delay_seconds;
 
-## Pergunta
+// taxa teórica por minuto, limitada por max_per_minute
+const taxaPorChip = 60 / Math.max(delayMed, 1);
+const taxaTotal = Math.min(taxaPorChip * n, max_per_minute);
 
-Pode prosseguir com (a) o auto-finalizar e (b) o backfill das duas campanhas existentes para `Concluída`?
+const minutos = totalRecipients / taxaTotal;
+```
+
+Formata "Xh Ymin" e mostra a taxa efetiva. O `totalRecipients` o wizard já calcula — basta passar pra prop.
+
+### Modo sincronizado (servidor)
+
+**Schema** (`campaign_send_settings`): 2 colunas novas
+- `batch_mode boolean default false`
+- `batch_pause_seconds integer` (nullable)
+
+**Form** (`send-settings-form.tsx`): switch + input numérico, validação básica (pausa ≥ 0).
+
+**Cron** (`src/lib/send/sender.server.ts`):
+- Após `result.ok`, se `settings.batch_mode` está ligado: em vez de chamar `pushNextScheduledFor` por chip, chamar nova função `pushBatchScheduledFor(ctx, campaignId, channelIds, batch_pause_seconds)` que empurra **todos os próximos `pending` da campanha** (um por canal) para `agora + batch_pause_seconds`.
+- Quando desligado: mantém o `pushNextScheduledFor` atual (zero mudança de comportamento).
+
+Isso garante o ritmo "4 juntos → pausa → 4 juntos" que você descreveu, sem quebrar o fluxo individual por chip quando o modo está desligado.
+
+## Arquivos afetados
+
+| Arquivo | Mudança |
+|---|---|
+| migration nova | + colunas `batch_mode`, `batch_pause_seconds` em `campaign_send_settings` |
+| `src/components/campaign/send-settings-form.tsx` | + card de estimativa, + seção "Lotes sincronizados", + 2 campos no state |
+| `src/routes/_authenticated/campaigns.$campaignId.settings.tsx` e wizard de criação | passar `totalRecipients` pra prop nova |
+| `src/lib/campaigns.functions.ts` | persistir/ler os 2 campos novos |
+| `src/lib/send/sender.server.ts` | nova `pushBatchScheduledFor` + branch no `if (result.ok)` |
+
+## Validação após implementar
+
+1. Abrir uma campanha existente → ver o card de estimativa atualizando ao vivo
+2. Ligar "Sincronizar lotes", definir pausa 30s, salvar
+3. Disparar com 3+ chips → ver no `message_queue.scheduled_for` os próximos 3 itens com timestamp idêntico (lote sincronizado)
+4. Desligar o modo → comportamento volta ao atual
+
+## Minha opinião sobre o trade-off
+
+O modo sincronizado é mais lento que o atual (4 chips × 30s vira ~8 msgs/min vs ~40 msgs/min hoje), mas é mais "natural" — parece tráfego humano coordenado em vez de 4 robôs com relógios diferentes. Pra volumes pequenos/médios e pra evitar bloqueio em chips novos, vale a pena. Pra blasts grandes, deixe desligado.
+
+A estimativa de duração é ganho puro sem custo.
