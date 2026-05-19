@@ -85,6 +85,8 @@ function CampaignSendSettingsPage() {
       timezone: settings.timezone ?? "America/Sao_Paulo",
       auto_pause_outside_hours: settings.auto_pause_outside_hours ?? true,
       auto_pause_on_all_channels_down: settings.auto_pause_on_all_channels_down ?? true,
+      batch_mode: settings.batch_mode ?? false,
+      batch_pause_seconds: settings.batch_pause_seconds ?? 60,
     };
     setForm(normalized);
     setBaseline(normalized);
@@ -144,7 +146,12 @@ function CampaignSendSettingsPage() {
       {isLoading ? (
         <Card><CardContent className="p-6 text-sm text-muted-foreground">Carregando…</CardContent></Card>
       ) : (
-        <SendSettingsForm form={form} onChange={setForm} channels={channels} />
+        <SendSettingsForm
+          form={form}
+          onChange={setForm}
+          channels={channels}
+          totalRecipients={campaign?.total_recipients ?? 0}
+        />
       )}
 
       {/* Rodapé sticky */}
