@@ -557,15 +557,15 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
 
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                     <MethodCard icon={List} title="Listas de Contatos" subtitle="Usar listas pré-definidas"
-                      active={method === "list"} onClick={() => { setMethod("list"); setResolved([]); setSummary(emptySummary()); }} />
+                      active={method === "list"} onClick={() => selectMethod("list")} />
                     <MethodCard icon={Tag} title="Filtrar por Etiquetas" subtitle="Selecionar por etiquetas"
-                      active={method === "tags"} onClick={() => { setMethod("tags"); setResolved([]); setSummary(emptySummary()); }} />
+                      active={method === "tags"} onClick={() => selectMethod("tags")} />
                     <MethodCard icon={Users} title="Grupos do Sistema" subtitle="Disponível apenas para WhatsApp Web"
                       disabled tooltip="Disponível apenas para WhatsApp Web" />
                     <MethodCard icon={FileSpreadsheet} title="Importar Planilha" subtitle="Upload de arquivo CSV/Excel"
-                      active={method === "import"} onClick={() => { setMethod("import"); setResolved([]); setSummary(emptySummary()); }} />
+                      active={method === "import"} onClick={() => selectMethod("import")} />
                     <MethodCard icon={UserPlus} title="Adicionar Manualmente" subtitle="Incluir contatos um a um"
-                      active={method === "manual"} onClick={() => { setMethod("manual"); setResolved([]); setSummary(emptySummary()); }} />
+                      active={method === "manual"} onClick={() => selectMethod("manual")} />
                   </div>
 
                   {method && (
