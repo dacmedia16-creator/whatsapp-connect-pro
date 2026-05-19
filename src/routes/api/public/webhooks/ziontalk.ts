@@ -43,9 +43,10 @@ export const Route = createFileRoute("/api/public/webhooks/ziontalk")({
       POST: async ({ request }) => {
         const expected = process.env.ZION_WEBHOOK_TOKEN;
         if (!expected) return new Response("Webhook não configurado", { status: 503 });
-        const token = request.headers.get("x-zion-token")
-          ?? new URL(request.url).searchParams.get("token");
+        const url = new URL(request.url);
+        const token = request.headers.get("x-zion-token") ?? url.searchParams.get("token");
         if (token !== expected) return new Response("Unauthorized", { status: 401 });
+        const queryChannelId = url.searchParams.get("channel_id");
 
         let raw: unknown;
         try { raw = await request.json(); } catch { return new Response("JSON inválido", { status: 400 }); }
@@ -63,9 +64,14 @@ export const Route = createFileRoute("/api/public/webhooks/ziontalk")({
         const fromPhone = normalize(fromPhoneRaw);
         const toPhone = toPhoneRaw ? normalize(toPhoneRaw) : null;
 
-        // Identifica canal pelo número de destino quando informado
+        // Identifica canal: 1) query param channel_id (mais confiável), 2) número de destino do payload
         let channelId: string | null = null;
-        if (toPhone) {
+        if (queryChannelId) {
+          const { data: ch } = await supabaseAdmin
+            .from("channels").select("id").eq("id", queryChannelId).maybeSingle();
+          channelId = ch?.id ?? null;
+        }
+        if (!channelId && toPhone) {
           const { data: ch } = await supabaseAdmin
             .from("channels").select("id").eq("phone_e164", toPhone).maybeSingle();
           channelId = ch?.id ?? null;
