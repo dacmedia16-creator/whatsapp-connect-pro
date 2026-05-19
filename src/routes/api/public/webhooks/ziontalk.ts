@@ -50,7 +50,6 @@ export const Route = createFileRoute("/api/public/webhooks/ziontalk")({
 
         let raw: unknown;
         try { raw = await request.json(); } catch { return new Response("JSON inválido", { status: 400 }); }
-        try { console.log("[ziontalk webhook] payload:", JSON.stringify(raw)); } catch {}
         const flat = flattenZionPayload(raw);
         const parsed = PayloadSchema.safeParse(flat);
         if (!parsed.success) return new Response("Payload inválido", { status: 400 });
