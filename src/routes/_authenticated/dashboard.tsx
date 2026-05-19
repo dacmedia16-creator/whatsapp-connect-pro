@@ -4,7 +4,17 @@ import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
-import { Inbox, MessageSquareText, Send, CheckCheck, Megaphone, Smartphone } from "lucide-react";
+import { StatCard } from "@/components/stat-card";
+import { EmptyState } from "@/components/empty-state";
+import {
+  Inbox,
+  MessageSquareText,
+  Send,
+  CheckCheck,
+  Megaphone,
+  Smartphone,
+  TrendingUp,
+} from "lucide-react";
 import { pct } from "@/lib/utils-format";
 import {
   AreaChart,
@@ -20,31 +30,6 @@ export const Route = createFileRoute("/_authenticated/dashboard")({
   component: DashboardPage,
   head: () => ({ meta: [{ title: "Dashboard — ZionFlow" }] }),
 });
-
-function StatCard({
-  icon: Icon,
-  label,
-  value,
-  sub,
-}: {
-  icon: typeof Inbox;
-  label: string;
-  value: string | number;
-  sub?: string;
-}) {
-  return (
-    <Card>
-      <CardContent className="p-5">
-        <div className="flex items-center justify-between">
-          <p className="text-sm text-muted-foreground">{label}</p>
-          <Icon className="h-4 w-4 text-muted-foreground" />
-        </div>
-        <p className="font-display text-3xl text-foreground mt-2">{value}</p>
-        {sub && <p className="text-xs text-muted-foreground mt-1">{sub}</p>}
-      </CardContent>
-    </Card>
-  );
-}
 
 function DashboardPage() {
   const { data } = useQuery({
@@ -91,89 +76,203 @@ function DashboardPage() {
   });
 
   const connected = (data?.channels ?? []).filter((c) => c.status === "connected").length;
+  const totalChannels = data?.channels.length ?? 0;
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
+    <div className="p-6 md:p-8 max-w-7xl mx-auto">
       <PageHeader
-        title="Visão geral"
-        description="Métricas de envio, atendimento e saúde dos canais conectados."
+        eyebrow="Visão geral"
+        title="Bem-vindo de volta"
+        description="Acompanhe envios, atendimento e a saúde dos canais conectados ao seu workspace."
       />
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
-        <StatCard icon={Send} label="Enviadas" value={sent} />
-        <StatCard icon={CheckCheck} label="Entregues" value={delivered} sub="≈ status HTTP 2xx" />
-        <StatCard icon={MessageSquareText} label="Respostas" value={replies} />
-        <StatCard icon={Inbox} label="Taxa de resposta" value={responseRate} />
-        <StatCard icon={Megaphone} label="Campanhas ativas" value={data?.campaigns.length ?? 0} />
-        <StatCard icon={Smartphone} label="Canais conectados" value={connected} sub={`${data?.channels.length ?? 0} total`} />
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <StatCard icon={Send} label="Mensagens enviadas" value={sent} tone="info" hint="acumulado total" />
+        <StatCard
+          icon={CheckCheck}
+          label="Taxa de entrega"
+          value={delivered ? `${Math.round((delivered / Math.max(sent, 1)) * 100)}%` : "—"}
+          tone="success"
+          hint="HTTP 2xx em send_logs"
+        />
+        <StatCard
+          icon={MessageSquareText}
+          label="Taxa de resposta"
+          value={responseRate}
+          tone="default"
+          hint={`${replies} respostas`}
+        />
+        <StatCard
+          icon={Smartphone}
+          label="Canais conectados"
+          value={`${connected}/${totalChannels}`}
+          tone={connected === totalChannels && totalChannels > 0 ? "success" : "warning"}
+          hint={totalChannels === 0 ? "Nenhum canal" : "online agora"}
+        />
       </div>
 
-      <Card className="mb-6">
-        <CardHeader>
-          <CardTitle className="font-display text-xl">Atividade últimos 14 dias</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="h-64 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={days}>
-                <defs>
-                  <linearGradient id="g1" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="var(--color-chart-1)" stopOpacity={0.4} />
-                    <stop offset="95%" stopColor="var(--color-chart-1)" stopOpacity={0} />
-                  </linearGradient>
-                  <linearGradient id="g2" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="var(--color-chart-2)" stopOpacity={0.4} />
-                    <stop offset="95%" stopColor="var(--color-chart-2)" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
-                <XAxis dataKey="label" tick={{ fontSize: 12 }} />
-                <YAxis tick={{ fontSize: 12 }} />
-                <RTooltip />
-                <Area type="monotone" dataKey="sent" stroke="var(--color-chart-1)" fill="url(#g1)" name="Enviadas" />
-                <Area type="monotone" dataKey="in" stroke="var(--color-chart-2)" fill="url(#g2)" name="Recebidas" />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        </CardContent>
-      </Card>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+        <Card className="lg:col-span-2">
+          <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-3">
+            <div>
+              <CardTitle className="font-display text-xl tracking-tight">
+                Atividade dos últimos 14 dias
+              </CardTitle>
+              <p className="text-sm text-muted-foreground mt-1">
+                Envios vs. mensagens recebidas por dia.
+              </p>
+            </div>
+            <Badge variant="info" className="hidden sm:inline-flex">
+              <TrendingUp className="h-3 w-3" />
+              14 dias
+            </Badge>
+          </CardHeader>
+          <CardContent>
+            <div className="h-72 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={days} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="g1" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="var(--color-chart-1)" stopOpacity={0.35} />
+                      <stop offset="95%" stopColor="var(--color-chart-1)" stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="g2" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="var(--color-chart-2)" stopOpacity={0.35} />
+                      <stop offset="95%" stopColor="var(--color-chart-2)" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" vertical={false} />
+                  <XAxis dataKey="label" tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }} axisLine={false} tickLine={false} />
+                  <RTooltip
+                    contentStyle={{
+                      backgroundColor: "var(--color-card)",
+                      border: "1px solid var(--color-border)",
+                      borderRadius: "8px",
+                      fontSize: "12px",
+                    }}
+                  />
+                  <Area type="monotone" dataKey="sent" stroke="var(--color-chart-1)" strokeWidth={2} fill="url(#g1)" name="Enviadas" />
+                  <Area type="monotone" dataKey="in" stroke="var(--color-chart-2)" strokeWidth={2} fill="url(#g2)" name="Recebidas" />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="font-display text-xl tracking-tight">
+              Campanhas em andamento
+            </CardTitle>
+            <p className="text-sm text-muted-foreground">
+              {data?.campaigns.length ?? 0} ativa(s) ou agendada(s)
+            </p>
+          </CardHeader>
+          <CardContent>
+            {(data?.campaigns.length ?? 0) === 0 ? (
+              <EmptyState
+                icon={Megaphone}
+                title="Nada por enquanto"
+                description="Quando você iniciar uma campanha ela aparece aqui."
+              />
+            ) : (
+              <ul className="divide-y divide-border">
+                {data?.campaigns.map((c) => (
+                  <li key={c.id} className="flex items-center justify-between py-3 first:pt-0 last:pb-0">
+                    <span className="text-sm font-medium truncate">{c.id.slice(0, 8)}</span>
+                    <Badge variant={c.status === "running" ? "success" : "info"} className="capitalize">
+                      {c.status}
+                    </Badge>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+      </div>
 
       <Card>
-        <CardHeader>
-          <CardTitle className="font-display text-xl">Status dos canais</CardTitle>
+        <CardHeader className="flex flex-row items-center justify-between pb-3">
+          <div>
+            <CardTitle className="font-display text-xl tracking-tight">
+              Saúde dos canais
+            </CardTitle>
+            <p className="text-sm text-muted-foreground mt-1">
+              Limite diário, status de conexão e utilização atual.
+            </p>
+          </div>
         </CardHeader>
         <CardContent>
           {data?.channels.length ? (
-            <div className="divide-y">
-              {data.channels.map((c) => (
-                <div key={c.id} className="flex items-center justify-between py-3">
-                  <div className="flex items-center gap-3">
-                    <span
-                      className={
-                        "h-2.5 w-2.5 rounded-full " +
-                        (c.status === "connected"
-                          ? "bg-success"
-                          : c.status === "paused"
-                          ? "bg-warning"
-                          : "bg-destructive")
-                      }
-                    />
-                    <span className="font-medium">{c.label}</span>
-                  </div>
-                  <div className="flex items-center gap-3 text-sm text-muted-foreground">
-                    <span>
-                      {c.sent_today}/{c.daily_limit} hoje
-                    </span>
-                    <Badge variant="outline" className="capitalize">
-                      {c.status}
-                    </Badge>
-                  </div>
-                </div>
-              ))}
-            </div>
+            <ul className="divide-y divide-border">
+              {data.channels.map((c) => {
+                const used = c.daily_limit > 0 ? Math.round((c.sent_today / c.daily_limit) * 100) : 0;
+                return (
+                  <li key={c.id} className="flex items-center justify-between py-4 first:pt-0 last:pb-0 gap-4">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span
+                        aria-hidden="true"
+                        className={
+                          "h-2.5 w-2.5 rounded-full shrink-0 " +
+                          (c.status === "connected"
+                            ? "bg-success ring-4 ring-success/15"
+                            : c.status === "paused"
+                            ? "bg-warning ring-4 ring-warning/15"
+                            : "bg-destructive ring-4 ring-destructive/15")
+                        }
+                      />
+                      <div className="min-w-0">
+                        <p className="font-medium text-sm truncate">{c.label}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {c.sent_today.toLocaleString("pt-BR")} de {c.daily_limit.toLocaleString("pt-BR")} envios hoje
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-4 shrink-0">
+                      <div className="hidden sm:flex flex-col items-end gap-1">
+                        <span className="text-xs text-muted-foreground">{used}% usado</span>
+                        <div className="h-1.5 w-24 rounded-full bg-muted overflow-hidden">
+                          <div
+                            className={
+                              "h-full transition-all " +
+                              (used > 90 ? "bg-destructive" : used > 70 ? "bg-warning" : "bg-success")
+                            }
+                            style={{ width: `${Math.min(used, 100)}%` }}
+                          />
+                        </div>
+                      </div>
+                      <Badge
+                        variant={
+                          c.status === "connected"
+                            ? "success"
+                            : c.status === "paused"
+                            ? "warning"
+                            : "destructive"
+                        }
+                        className="capitalize"
+                      >
+                        {c.status}
+                      </Badge>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
           ) : (
-            <p className="text-sm text-muted-foreground">
-              Nenhum canal cadastrado. Vá para <a href="/channels" className="text-primary hover:underline">Canais</a> para adicionar.
-            </p>
+            <EmptyState
+              icon={Smartphone}
+              title="Nenhum canal conectado"
+              description="Conecte seu primeiro número WhatsApp para começar a enviar mensagens."
+              action={
+                <a
+                  href="/channels"
+                  className="inline-flex h-9 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+                >
+                  Ir para Canais
+                </a>
+              }
+            />
           )}
         </CardContent>
       </Card>
