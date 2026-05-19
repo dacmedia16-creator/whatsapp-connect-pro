@@ -365,7 +365,7 @@ export const createCampaignFn = createServerFn({ method: "POST" })
     const settingsRow = {
       campaign_id: campaign.id,
       selected_channel_ids: s?.selected_channel_ids?.length ? s.selected_channel_ids : channelIds,
-      rotation_mode: s?.rotation_mode ?? ("round_robin" as const),
+      rotation_mode: s?.rotation_mode ?? ("least_used" as const),
       channel_priority: s?.channel_priority?.length ? s.channel_priority : channelIds,
       delay_seconds: s?.delay_seconds ?? 30,
       random_delay_min: s?.random_delay_min ?? null,
