@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
+import { ensureFreshSession } from "@/lib/auth-session";
 
 export type AppRole = "admin" | "gestor" | "atendente";
 
@@ -47,7 +48,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setLoading(false);
     });
 
-    return () => sub.subscription.unsubscribe();
+    // Refresh proativo a cada 4 min — cobre o caso de aba ociosa em que o
+    // autoRefresh do SDK não dispara e o token vence silenciosamente.
+    const interval = window.setInterval(() => {
+      void ensureFreshSession(120);
+    }, 4 * 60 * 1000);
+    // Quando a aba volta a ficar visível, força um refresh imediato.
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void ensureFreshSession(120);
+    };
+    document.addEventListener("visibilitychange", onVisible);
+
+    return () => {
+      sub.subscription.unsubscribe();
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, []);
 
   async function loadProfile(userId: string) {
