@@ -321,9 +321,13 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
       if (res) {
         setResolved(res.contacts);
         setSummary(res.summary);
+        setExcludedKeys(new Set());
+        setRecipientsPage(0);
       } else {
         setResolved([]);
         setSummary(emptySummary());
+        setExcludedKeys(new Set());
+        setRecipientsPage(0);
       }
     } catch (e: any) {
       toast.error(e.message ?? "Falha ao calcular destinatários");
@@ -371,17 +375,26 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
     }
   }
 
-  const eligibleCount = summary.eligible;
+  const keyFor = (c: ResolvedContact, i: number) =>
+    c.id ?? c.phone_e164 ?? `${c.rawPhone}-${i}`;
+
+  const eligibleRecipients = useMemo(
+    () =>
+      resolved.filter(
+        (r, i) =>
+          r.status === "eligible" &&
+          r.phone_e164 &&
+          !excludedKeys.has(keyFor(r, i)),
+      ),
+    [resolved, excludedKeys],
+  );
+
+  const eligibleCount = eligibleRecipients.length;
   const scheduledValid = !scheduledAt || new Date(scheduledAt).getTime() > Date.now() - 60_000;
   const canAdvance = !!name.trim() && channelIds.length > 0 && scheduledValid && eligibleCount >= 1;
   const canAdvanceFromStep2 = canAdvance && message.trim().length >= 5;
   const settingsError = useMemo(() => validateSendSettings(sendSettings), [sendSettings]);
   const canSubmit = canAdvanceFromStep2 && !settingsError;
-
-  const eligibleRecipients = useMemo(
-    () => resolved.filter((r) => r.status === "eligible" && r.phone_e164),
-    [resolved],
-  );
 
   const previewMsg = useMemo(() => {
     const first = eligibleRecipients[0];
