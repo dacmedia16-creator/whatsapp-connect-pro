@@ -17,7 +17,7 @@ import { Trash2, Plus, Save } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/settings")({
   component: SettingsPage,
-  head: () => ({ meta: [{ title: "Configurações — ZionFlow" }] }),
+  head: () => ({ meta: [{ title: "Configurações — Denis Envia Flow" }] }),
 });
 
 function SettingsPage() {

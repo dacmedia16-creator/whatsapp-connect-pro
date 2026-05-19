@@ -25,7 +25,7 @@ import { ContactListsTab } from "@/components/contacts/contact-lists-tab";
 
 export const Route = createFileRoute("/_authenticated/contacts")({
   component: ContactsPage,
-  head: () => ({ meta: [{ title: "Contatos — ZionFlow" }] }),
+  head: () => ({ meta: [{ title: "Contatos — Denis Envia Flow" }] }),
 });
 
 type Contact = {

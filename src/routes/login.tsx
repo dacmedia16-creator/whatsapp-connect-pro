@@ -11,7 +11,7 @@ import { MessageSquareText } from "lucide-react";
 
 export const Route = createFileRoute("/login")({
   component: LoginPage,
-  head: () => ({ meta: [{ title: "Entrar — ZionFlow" }] }),
+  head: () => ({ meta: [{ title: "Entrar — Denis Envia Flow" }] }),
 });
 
 function LoginPage() {
@@ -43,7 +43,7 @@ function LoginPage() {
       <div className="hidden lg:flex flex-col justify-between p-12 bg-sidebar text-sidebar-foreground">
         <div className="flex items-center gap-2">
           <MessageSquareText className="h-6 w-6 text-gold" />
-          <span className="font-display text-2xl">ZionFlow</span>
+          <span className="font-display text-2xl">Denis Envia Flow</span>
         </div>
         <div className="space-y-3">
           <h1 className="font-display text-4xl leading-tight">
@@ -53,7 +53,7 @@ function LoginPage() {
             Campanhas autorizadas, atendimento centralizado e relatórios — com a API ZionTalk integrada de ponta a ponta.
           </p>
         </div>
-        <p className="text-xs text-sidebar-foreground/50">© ZionFlow</p>
+        <p className="text-xs text-sidebar-foreground/50">© Denis Envia Flow</p>
       </div>
 
       <div className="flex items-center justify-center p-8">

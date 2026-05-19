@@ -39,7 +39,7 @@ import { formatPhone } from "@/lib/phone";
 
 export const Route = createFileRoute("/_authenticated/sending-panel")({
   component: SendingPanel,
-  head: () => ({ meta: [{ title: "Painel de Envios — ZionFlow" }] }),
+  head: () => ({ meta: [{ title: "Painel de Envios — Denis Envia Flow" }] }),
   validateSearch: (s: Record<string, unknown>) => ({
     campaignId: typeof s.campaignId === "string" ? s.campaignId : undefined,
   }),

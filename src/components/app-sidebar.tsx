@@ -79,7 +79,7 @@ export function AppSidebar() {
           {!collapsed && (
             <div className="flex flex-col leading-tight">
               <span className="font-display text-lg text-sidebar-foreground tracking-tight">
-                ZionFlow
+                Denis Envia Flow
               </span>
               <span className="text-[10px] uppercase tracking-wider text-sidebar-foreground/50">
                 Plataforma WhatsApp

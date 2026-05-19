@@ -24,7 +24,7 @@ import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_authenticated/inbox")({
   component: InboxPage,
-  head: () => ({ meta: [{ title: "Caixa de entrada — ZionFlow" }] }),
+  head: () => ({ meta: [{ title: "Caixa de entrada — Denis Envia Flow" }] }),
 });
 
 const STATUS_LABEL: Record<string, string> = {
