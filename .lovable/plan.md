@@ -1,46 +1,40 @@
-## Importar / adicionar contatos em série a uma lista existente
+## Paginação 10 em 10 no seletor de listas
 
-Hoje, no diálogo **Gerenciar contatos** de uma lista, só dá para selecionar contatos já cadastrados, um a um (ou em lote, mas apenas dos existentes). Vou adicionar duas novas formas de popular uma lista de uma vez:
+No passo "Para quem enviar?" → método **Lista**, o bloco "Selecione uma ou mais listas" hoje mostra todas as listas numa área rolável. Vou paginar em **10 por página**, mantendo a seleção entre páginas.
 
-### 1. Importar CSV/planilha
-- Novo botão **"Importar CSV"** no topo da coluna "Adicionar contatos".
-- Aceita `.csv` (vírgula ou ponto-e-vírgula) e `.txt`.
-- Colunas reconhecidas: `nome`, `telefone` (obrigatória), `email`, `tags` (separadas por `;`), `consent` (true/false). Cabeçalho opcional — se não houver, a 1ª coluna é telefone e a 2ª nome.
-- Limite: 5.000 linhas por importação.
+### Mudanças (apenas em `src/routes/_authenticated/campaigns.index.tsx`)
 
-### 2. Colar/digitar em série (manual em massa)
-- Novo botão **"Adicionar em série"**.
-- Textarea grande, uma linha por contato. Formatos aceitos:
-  - `Nome, Telefone`
-  - `Telefone` (nome fica vazio → usa o próprio telefone)
-- Até 500 linhas.
+1. **Novo estado local** ao lado de `listIds`:
+   - `const [listsPage, setListsPage] = useState(0);`
+   - `const PAGE_SIZE = 10;`
 
-### Fluxo comum (CSV ou manual)
-1. Tela de pré-visualização (reutiliza o `RecipientTable` já existente) mostrando:
-   - Elegíveis, telefone inválido, duplicados, já na lista, opt-out.
-2. Botão **"Adicionar N contatos à lista"** que:
-   - Faz `upsert` por `phone_e164` na tabela `contacts` (cria os novos com `consent=true`, `source='list_import'` ou `'list_manual'`).
-   - Insere em `contact_list_items` apenas os que ainda não estão na lista (dedupe contra `memberIds`).
-   - Mostra toast com resumo: `X adicionados · Y já estavam · Z inválidos`.
+2. **Derivar página atual** antes do `.map`:
+   - `pageCount = Math.max(1, Math.ceil(lists.length / PAGE_SIZE))`
+   - `pageLists = lists.slice(listsPage * 10, listsPage * 10 + 10)`
+   - Clamp: se `listsPage >= pageCount`, resetar para 0 (via `useEffect` dependente de `lists.length`).
 
-### Backend
-Nova server function `addContactsToListFn` em `src/lib/contact-lists.functions.ts`:
-- Input: `{ listId, rows: RawRow[], source: 'import'|'manual' }`.
-- Protegida por `requireSupabaseAuth` + `assertManager`.
-- Reutiliza `normalizePhoneE164` e `classifyRows` (mesma lógica do wizard de campanha).
-- Retorna `{ added, alreadyInList, skipped: { invalid, optOut, duplicate } }`.
+3. **Render**: trocar `lists.map(...)` por `pageLists.map(...)`. A `div` rolável passa a ter altura natural (sem `max-h-56 overflow-y-auto`) já que são no máx. 10 itens.
 
-### Frontend
-- Atualizar `src/components/contacts/contact-lists-tab.tsx`:
-  - 2 novos diálogos (`ImportCsvDialog`, `BulkManualDialog`) dentro de `ManageListMembersDialog`.
-  - Reaproveitar o parser CSV simples (sem dependência nova) — split por linha, detectar delimitador.
-  - Após sucesso, invalidar `contact_list_items` e `contact_lists_counts`.
+4. **Cabeçalho da seleção** (linha 510-528): adicionar uma terceira ação:
+   - **"Selecionar todas da página"** → `setListIds(prev => Array.from(new Set([...prev, ...pageLists.map(l => l.id)])))`
+   - Manter **"Selecionar todas"** (todas as listas, todas as páginas) e **"Limpar"**.
 
-### Validações
-- Telefone via `libphonenumber-js` (já em uso).
-- Nome ≤ 200 chars, tags ≤ 20 itens de até 60 chars.
-- Sem alteração de schema — só usa as tabelas `contacts` e `contact_list_items` existentes.
+5. **Rodapé do bloco** (entre a div da lista e o rodapé "X lista(s)…"): adicionar controles de paginação quando `lists.length > 10`:
+   ```
+   [‹ Anterior]   Página {listsPage+1} de {pageCount}   ({lists.length} listas)   [Próxima ›]
+   ```
+   - Botões `variant="ghost" size="sm"` com `ChevronLeft` / `ChevronRight` (já em uso no projeto via lucide-react — adicionar ao import se faltar).
+   - Desabilitar nas extremidades.
 
-### Arquivos
-- **Novo**: `src/lib/contact-lists.functions.ts`
-- **Editar**: `src/components/contacts/contact-lists-tab.tsx`
+6. **Contagem do rodapé existente** (linha 561-564) permanece igual — usa `listIds` global, independente de página.
+
+### Comportamento
+- A seleção (`listIds`) é global e persiste ao trocar de página.
+- "Selecionar todas" continua marcando todas as listas do banco (não só a página).
+- "Selecionar todas da página" é o atalho 10 em 10 pedido.
+- O `Badge` "N contato(s)" e o estilo dos itens não mudam.
+
+### Não muda
+- Nenhuma alteração de backend, schema ou lógica de `runPreview`.
+- Nenhuma alteração nas outras abas (Etiquetas, Importar, Manual) nem no `RecipientTable`.
+- Sem novos componentes nem dependências.
