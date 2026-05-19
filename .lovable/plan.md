@@ -1,56 +1,55 @@
 ## Problema
 
-O toast vermelho "JWT has expired" aparece quando o token de acesso do Supabase venceu (sessões duram 1h por padrão) e você clica em **Validar contatos** (ou qualquer outra ação que chame um serverFn).
+A campanha "Teste" foi criada com a lista **"Corretores Remax Unica Escolha"** (178 contatos), mas acabou enfileirando **181 destinatários** — três a mais do que a lista contém. Esses três contatos extras vêm da base de contatos antiga e o usuário quer que a campanha use **só** o que está na fonte selecionada.
 
-Fluxo do bug:
-1. `attachSupabaseAuth` lê `supabase.auth.getSession()` e anexa o `access_token` atual no header `Authorization`.
-2. Se o token já expirou e o auto-refresh do Supabase ainda não rodou (aba ficou ociosa, máquina dormiu), o serverFn recebe um JWT vencido.
-3. O middleware `requireSupabaseAuth` rejeita → erro borbulha até o `toast.error` em `runPreview` mostrando a mensagem crua do Supabase.
+Levantamento no banco confirmou:
+- `contact_list_items` da lista: **178**
+- `contacts` elegíveis na base inteira: **181** (consent=true, sem opt-out)
+- Diferença: 3 contatos elegíveis estão fora da lista, mas mesmo assim entraram
 
-Hoje **não existe nenhum tratamento global** para sessão expirada — o usuário fica preso na tela vendo erro genérico em vez de ser mandado de volta pro login.
+## Causa provável
+
+O `previewRecipientsFn` ("list") faz `select contact:contacts(...)` em `contact_list_items` — isso é correto. Mas o `createCampaignFn` **não revalida** que cada `recipient` enviado pelo cliente realmente pertence às listas declaradas em `methodSummary.listIds`. Se o estado de UI ficou sujo (ex.: o usuário trocou de método "tags → list" e a lista de `eligibleRecipients` reteve resíduos), o servidor aceita do mesmo jeito.
+
+Também falta: na tela de criação, o usuário não vê de forma explícita "lista tem 178, fila tem 181" — então o desvio passa despercebido.
 
 ## Plano
 
-### 1. Forçar refresh proativo no `attachSupabaseAuth`
+### 1. Endurecer o servidor (fonte da verdade)
 
-Em `src/integrations/supabase/auth-attacher.ts`, antes de pegar o token:
+Em `src/lib/campaigns.functions.ts → createCampaignFn`:
 
-- Ler a `session` atual.
-- Se `expires_at` está a menos de ~60s do vencimento (ou já passou), chamar `supabase.auth.refreshSession()` e usar o novo token.
-- Se o refresh falhar (refresh_token inválido), seguir sem header — o servidor responde 401 e o passo 3 cuida.
+- Quando `method === "list"`: ignorar o array `recipients` do cliente e **recarregar** os contatos diretamente de `contact_list_items.in('list_id', methodSummary.listIds)`. Aplicar consent + opt-out + dedup por telefone. Resultado vira a fonte autoritativa de `contactIds`.
+- Quando `method === "tags"`: idem — refazer a query `contacts` filtrada por `methodSummary.tags` + `match`.
+- Quando `method === "import" | "manual"`: manter o caminho atual (não tem fonte canônica no DB), mas validar que cada `phone_e164` recebido aparece na lista de telefones que o cliente declarou ter importado/digitado.
+- Se a contagem final divergir do que o cliente enviou, registrar a diferença em `audience_filter` para auditoria.
 
-Isso resolve 90% dos casos: a próxima chamada a serverFn renova o token sozinha.
+### 2. Limpar estado da UI ao trocar de método
 
-### 2. Listener global de expiração no `useAuth`
+Em `src/routes/_authenticated/campaigns.index.tsx`:
 
-Em `src/hooks/use-auth.tsx`, no `onAuthStateChange`, tratar os eventos:
+- Ao mudar `method`, já zera `resolved`, mas **também** zerar `excludedKeys`, `listIds`, `tagSelection`, `manualRows`, `importedRows` — para não vazar IDs/telefones de uma fonte anterior.
+- Garantir que `eligibleRecipients` (linha 425) só considere itens cuja `source === method` atual.
 
-- `TOKEN_REFRESHED` → silencioso (já funciona).
-- `SIGNED_OUT` → limpar estado (já funciona).
-- **Novo:** detectar erro de refresh (evento `SIGNED_OUT` disparado pelo Supabase quando refresh falha) → mostrar toast amigável "Sua sessão expirou, faça login novamente" e redirecionar pra `/login`.
+### 3. Tornar a contagem visível no passo 1
 
-### 3. Handler de erro nos serverFns do cliente
+Na seção "Destinatários" do wizard, mostrar um resumo curto em 3 números:
 
-Criar um helper `handleServerFnError(e)` (em `src/lib/server-fn-error.ts`) que:
+```text
+Lista: 178   →   Elegíveis: 175   →   Na fila: 175
+                                       (-3 sem consentimento)
+```
 
-- Detecta strings `JWT expired`, `Unauthorized`, `No authorization header`.
-- Faz `supabase.auth.signOut()` + `navigate({ to: '/login' })` + toast "Sessão expirada, entre novamente."
-- Em outros erros, só repassa a mensagem original.
+Hoje só aparece "X selecionados / Y total"; a quebra deixa claro de onde vem cada exclusão e impede o "+3 fantasma" passar batido.
 
-Substituir o `toast.error(e.message ...)` em `runPreview` (e nos outros catches de serverFn da tela de campanhas, e idealmente nas outras telas) por esse helper.
+### 4. Validação manual
 
-### 4. Validação
-
-- Forçar expiração (no DevTools, alterar `expires_at` no localStorage para o passado) e clicar em **Validar contatos** → deve renovar transparentemente.
-- Apagar o `refresh_token` do localStorage e clicar em **Validar** → deve redirecionar pro login com toast amigável, sem o erro vermelho cru.
+Depois do deploy:
+1. Criar campanha pela lista "Corretores Remax": esperar exatamente 178 (ou menos, conforme consent).
+2. Trocar de método "list → tags → list" no meio do fluxo: contadores zeram, sem resíduo.
+3. Conferir no painel de envios que `campaign_recipients.count` bate com o resumo do wizard.
 
 ## Fora de escopo
 
-- Não vou mexer na lógica de envio nem nas configurações.
-- Não vou aumentar o tempo de expiração do JWT (config do projeto Supabase, fora da UI).
-
-## Detalhes técnicos
-
-- O Supabase JS já tem `autoRefreshToken: true` no client, mas só renova quando a aba está visível e ativa — não cobre o caso de aba dormindo. O refresh proativo no middleware do TanStack fecha esse gap.
-- `expires_at` na session é em segundos Unix; comparar com `Date.now()/1000`.
-- O helper de erro precisa rodar só no cliente (usa `window`/router).
+- Não vou apagar contatos antigos da base (mantém histórico).
+- Não toca em send-panel, processamento de fila, autenticação ou cancelamento de campanha.

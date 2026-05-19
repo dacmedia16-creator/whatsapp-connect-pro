@@ -246,6 +246,23 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
   const previewFn = useServerFn(previewRecipientsFn);
   const createFn = useServerFn(createCampaignFn);
 
+  // Troca de método com reset completo — evita vazar IDs/telefones
+  // de uma fonte anterior para o cálculo de destinatários.
+  function selectMethod(m: Exclude<Method, "groups">) {
+    setMethod(m);
+    setListIds([]);
+    setTagSelection([]);
+    setTagMatch("any");
+    setManualRows([]);
+    setImportedRows([]);
+    setResolved([]);
+    setSummary(emptySummary());
+    setExcludedKeys(new Set());
+    setRecipientsPage(0);
+    previewReqIdRef.current++;
+    if (previewAbortRef.current) { try { previewAbortRef.current.abort(); } catch {} }
+  }
+
   const reset = () => {
     setStep(1); setName(""); setScheduledAt(""); setChannelIds([]); setMethod(null);
     setListIds([]); setTagSelection([]); setTagMatch("any");
@@ -428,6 +445,7 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
         (r, i) =>
           r.status === "eligible" &&
           r.phone_e164 &&
+          (!method || r.source === method) &&
           !excludedKeys.has(keyFor(r, i)),
       ),
     [resolved, excludedKeys],
@@ -555,17 +573,36 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
                     </Badge>
                   </div>
 
+                  {resolved.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-2 text-xs rounded-md border bg-muted/20 px-3 py-2">
+                      <span className="text-muted-foreground">Fonte:</span>
+                      <span className="font-medium">{summary.found}</span>
+                      <span className="text-muted-foreground">→ Elegíveis:</span>
+                      <span className="font-medium text-success">{summary.eligible}</span>
+                      <span className="text-muted-foreground">→ Na fila:</span>
+                      <span className="font-medium">{eligibleCount}</span>
+                      {(summary.blockedNoConsent + summary.blockedOptOut + summary.invalidPhone + summary.duplicates) > 0 && (
+                        <span className="text-muted-foreground">
+                          {" "}({summary.blockedNoConsent > 0 && `-${summary.blockedNoConsent} sem consentimento`}
+                          {summary.blockedOptOut > 0 && `${summary.blockedNoConsent > 0 ? ", " : ""}-${summary.blockedOptOut} opt-out`}
+                          {summary.invalidPhone > 0 && `${(summary.blockedNoConsent + summary.blockedOptOut) > 0 ? ", " : ""}-${summary.invalidPhone} telefone inválido`}
+                          {summary.duplicates > 0 && `${(summary.blockedNoConsent + summary.blockedOptOut + summary.invalidPhone) > 0 ? ", " : ""}-${summary.duplicates} duplicados`})
+                        </span>
+                      )}
+                    </div>
+                  )}
+
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                     <MethodCard icon={List} title="Listas de Contatos" subtitle="Usar listas pré-definidas"
-                      active={method === "list"} onClick={() => { setMethod("list"); setResolved([]); setSummary(emptySummary()); }} />
+                      active={method === "list"} onClick={() => selectMethod("list")} />
                     <MethodCard icon={Tag} title="Filtrar por Etiquetas" subtitle="Selecionar por etiquetas"
-                      active={method === "tags"} onClick={() => { setMethod("tags"); setResolved([]); setSummary(emptySummary()); }} />
+                      active={method === "tags"} onClick={() => selectMethod("tags")} />
                     <MethodCard icon={Users} title="Grupos do Sistema" subtitle="Disponível apenas para WhatsApp Web"
                       disabled tooltip="Disponível apenas para WhatsApp Web" />
                     <MethodCard icon={FileSpreadsheet} title="Importar Planilha" subtitle="Upload de arquivo CSV/Excel"
-                      active={method === "import"} onClick={() => { setMethod("import"); setResolved([]); setSummary(emptySummary()); }} />
+                      active={method === "import"} onClick={() => selectMethod("import")} />
                     <MethodCard icon={UserPlus} title="Adicionar Manualmente" subtitle="Incluir contatos um a um"
-                      active={method === "manual"} onClick={() => { setMethod("manual"); setResolved([]); setSummary(emptySummary()); }} />
+                      active={method === "manual"} onClick={() => selectMethod("manual")} />
                   </div>
 
                   {method && (
