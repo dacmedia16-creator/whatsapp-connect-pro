@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { supabase } from "@/integrations/supabase/client";
@@ -15,7 +15,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { useAuth } from "@/hooks/use-auth";
-import { Plus, Megaphone, List, Tag, Users, FileSpreadsheet, UserPlus, X, ArrowLeft, Trash2 } from "lucide-react";
+import { Plus, Megaphone, List, Tag, Users, FileSpreadsheet, UserPlus, X, ArrowLeft, Trash2, ChevronLeft, ChevronRight } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -223,6 +223,7 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
 
   // method state
   const [listIds, setListIds] = useState<string[]>([]);
+  const [listsPage, setListsPage] = useState(0);
   const [tagSelection, setTagSelection] = useState<string[]>([]);
   const [tagMatch, setTagMatch] = useState<"any" | "all">("any");
   const [manualRows, setManualRows] = useState<Array<{ name: string; phone: string; consent: boolean; tags: string[] }>>([]);
@@ -284,6 +285,11 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
     queryFn: () => listContactListsFn(),
     enabled: open && method === "list",
   });
+
+  useEffect(() => {
+    const pageCount = Math.max(1, Math.ceil(lists.length / 10));
+    if (listsPage >= pageCount) setListsPage(0);
+  }, [lists.length, listsPage]);
 
   const { data: tagOptions = [] } = useQuery({
     queryKey: ["all-tags"],
@@ -519,6 +525,18 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
                               <span className="text-muted-foreground">·</span>
                               <button
                                 type="button"
+                                className="text-primary hover:underline"
+                                onClick={() => {
+                                  const pageIds = lists.slice(listsPage * 10, listsPage * 10 + 10).map((l: any) => l.id);
+                                  setListIds((prev) => Array.from(new Set([...prev, ...pageIds])));
+                                }}
+                                disabled={lists.length === 0}
+                              >
+                                Selecionar página
+                              </button>
+                              <span className="text-muted-foreground">·</span>
+                              <button
+                                type="button"
                                 className="text-muted-foreground hover:underline"
                                 onClick={() => setListIds([])}
                                 disabled={listIds.length === 0}
@@ -527,11 +545,11 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
                               </button>
                             </div>
                           </div>
-                          <div className="max-h-56 overflow-y-auto border rounded-md divide-y">
+                          <div className="border rounded-md divide-y">
                             {lists.length === 0 && (
                               <div className="px-3 py-4 text-sm text-muted-foreground">Nenhuma lista cadastrada. Crie listas em Contatos → Listas.</div>
                             )}
-                            {lists.map((l: any) => {
+                            {lists.slice(listsPage * 10, listsPage * 10 + 10).map((l: any) => {
                               const checked = listIds.includes(l.id);
                               return (
                                 <label
@@ -557,6 +575,37 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
                               );
                             })}
                           </div>
+                          {lists.length > 10 && (
+                            <div className="flex items-center justify-between text-xs">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 px-2"
+                                onClick={() => setListsPage((p) => Math.max(0, p - 1))}
+                                disabled={listsPage === 0}
+                              >
+                                <ChevronLeft className="h-3.5 w-3.5 mr-1" /> Anterior
+                              </Button>
+                              <span className="text-muted-foreground">
+                                Página {listsPage + 1} de {Math.max(1, Math.ceil(lists.length / 10))} · {lists.length} listas
+                              </span>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 px-2"
+                                onClick={() =>
+                                  setListsPage((p) =>
+                                    Math.min(Math.max(0, Math.ceil(lists.length / 10) - 1), p + 1),
+                                  )
+                                }
+                                disabled={listsPage >= Math.ceil(lists.length / 10) - 1}
+                              >
+                                Próxima <ChevronRight className="h-3.5 w-3.5 ml-1" />
+                              </Button>
+                            </div>
+                          )}
                           <div className="flex items-center justify-between">
                             <p className="text-xs text-muted-foreground">
                               {listIds.length === 0
