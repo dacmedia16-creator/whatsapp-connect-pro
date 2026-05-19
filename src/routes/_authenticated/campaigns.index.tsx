@@ -240,10 +240,6 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
   // step 3 — configurações avançadas de envio
   const [sendSettings, setSendSettings] = useState<SendSettingsState>(SEND_SETTINGS_DEFAULTS);
 
-  // Lotes — permite enviar somente N contatos por campanha (ex.: 10 ou 20)
-  const [batchSize, setBatchSize] = useState<number | "all">("all");
-  const [batchIndex, setBatchIndex] = useState(0);
-
   const previewFn = useServerFn(previewRecipientsFn);
   const createFn = useServerFn(createCampaignFn);
 
@@ -254,7 +250,6 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
     setResolved([]); setSummary(emptySummary());
     setMessage("Olá {{nome}}, "); setMedia(null); setInitiate(true);
     setSendSettings(SEND_SETTINGS_DEFAULTS);
-    setBatchSize("all"); setBatchIndex(0);
   };
 
   const { data: channels = [] } = useQuery({
@@ -366,38 +361,17 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
     }
   }
 
-  const allEligibleRecipients = useMemo(
-    () => resolved.filter((r) => r.status === "eligible" && r.phone_e164),
-    [resolved],
-  );
-
-  const totalBatches = useMemo(() => {
-    if (batchSize === "all" || batchSize <= 0) return 1;
-    return Math.max(1, Math.ceil(allEligibleRecipients.length / batchSize));
-  }, [allEligibleRecipients.length, batchSize]);
-
-  // Garante que batchIndex esteja sempre dentro do range
-  const safeBatchIndex = Math.min(batchIndex, totalBatches - 1);
-
-  const eligibleRecipients = useMemo(() => {
-    if (batchSize === "all" || batchSize <= 0) return allEligibleRecipients;
-    const start = safeBatchIndex * batchSize;
-    return allEligibleRecipients.slice(start, start + batchSize);
-  }, [allEligibleRecipients, batchSize, safeBatchIndex]);
-
-  const batchRange = useMemo(() => {
-    if (batchSize === "all" || batchSize <= 0) return null;
-    const start = safeBatchIndex * batchSize + 1;
-    const end = Math.min((safeBatchIndex + 1) * batchSize, allEligibleRecipients.length);
-    return { start, end };
-  }, [batchSize, safeBatchIndex, allEligibleRecipients.length]);
-
-  const eligibleCount = eligibleRecipients.length;
+  const eligibleCount = summary.eligible;
   const scheduledValid = !scheduledAt || new Date(scheduledAt).getTime() > Date.now() - 60_000;
   const canAdvance = !!name.trim() && channelIds.length > 0 && scheduledValid && eligibleCount >= 1;
   const canAdvanceFromStep2 = canAdvance && message.trim().length >= 5;
   const settingsError = useMemo(() => validateSendSettings(sendSettings), [sendSettings]);
   const canSubmit = canAdvanceFromStep2 && !settingsError;
+
+  const eligibleRecipients = useMemo(
+    () => resolved.filter((r) => r.status === "eligible" && r.phone_e164),
+    [resolved],
+  );
 
   const previewMsg = useMemo(() => {
     const first = eligibleRecipients[0];
@@ -669,90 +643,6 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
                     <>
                       <ComplianceSummary summary={summary} />
                       <RecipientTable contacts={resolved} />
-                      {allEligibleRecipients.length > 0 && (
-                        <Card className="border-primary/30">
-                          <CardContent className="p-4 space-y-3">
-                            <div className="flex items-center justify-between flex-wrap gap-2">
-                              <div>
-                                <h4 className="font-medium text-sm">Dividir em lotes</h4>
-                                <p className="text-xs text-muted-foreground">
-                                  Envie só uma parte dos elegíveis nesta campanha para evitar bloqueio do WhatsApp.
-                                </p>
-                              </div>
-                              <div className="flex flex-wrap gap-1.5 items-center">
-                                {[10, 20, 50].map((n) => (
-                                  <Button
-                                    key={n}
-                                    type="button"
-                                    size="sm"
-                                    variant={batchSize === n ? "default" : "outline"}
-                                    onClick={() => { setBatchSize(n); setBatchIndex(0); }}
-                                  >
-                                    {n}
-                                  </Button>
-                                ))}
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant={batchSize === "all" ? "default" : "outline"}
-                                  onClick={() => { setBatchSize("all"); setBatchIndex(0); }}
-                                >
-                                  Todos
-                                </Button>
-                                <Input
-                                  type="number"
-                                  min={1}
-                                  max={500}
-                                  placeholder="Outro"
-                                  className="h-8 w-20"
-                                  value={typeof batchSize === "number" && ![10, 20, 50].includes(batchSize) ? batchSize : ""}
-                                  onChange={(e) => {
-                                    const v = parseInt(e.target.value, 10);
-                                    if (!isNaN(v) && v > 0) { setBatchSize(v); setBatchIndex(0); }
-                                    else if (e.target.value === "") { setBatchSize("all"); setBatchIndex(0); }
-                                  }}
-                                />
-                              </div>
-                            </div>
-                            {batchSize !== "all" && totalBatches > 1 && batchRange && (
-                              <div className="flex items-center justify-between bg-muted/40 rounded-md px-3 py-2 text-sm">
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="ghost"
-                                  disabled={safeBatchIndex === 0}
-                                  onClick={() => setBatchIndex((i) => Math.max(0, i - 1))}
-                                >
-                                  ◀ Anterior
-                                </Button>
-                                <div className="text-center">
-                                  <div className="font-medium">
-                                    Lote {safeBatchIndex + 1} de {totalBatches}
-                                  </div>
-                                  <div className="text-xs text-muted-foreground">
-                                    Contatos {batchRange.start}–{batchRange.end} de {allEligibleRecipients.length} · enviando {eligibleCount}
-                                  </div>
-                                </div>
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="ghost"
-                                  disabled={safeBatchIndex >= totalBatches - 1}
-                                  onClick={() => setBatchIndex((i) => Math.min(totalBatches - 1, i + 1))}
-                                >
-                                  Próximo ▶
-                                </Button>
-                              </div>
-                            )}
-                            {batchSize !== "all" && (
-                              <p className="text-xs text-primary">
-                                Esta campanha será enviada para <strong>{eligibleCount} contato(s)</strong>
-                                {totalBatches > 1 && ` (lote ${safeBatchIndex + 1} de ${totalBatches})`}.
-                              </p>
-                            )}
-                          </CardContent>
-                        </Card>
-                      )}
                     </>
                   )}
                 </CardContent>
@@ -798,12 +688,7 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
                     <p><span className="text-muted-foreground">Canais:</span> {channels.filter((c: any) => channelIds.includes(c.id)).map((c: any) => c.label).join(", ") || "—"}</p>
                     <p><span className="text-muted-foreground">Agendamento:</span> {scheduledAt ? format(new Date(scheduledAt), "dd/MM/yyyy HH:mm", { locale: ptBR }) : "Imediato"}</p>
                     <p><span className="text-muted-foreground">Método:</span> {method}</p>
-                    <p className="text-success">
-                      <span className="text-muted-foreground">Elegíveis nesta campanha:</span> {eligibleCount}
-                      {batchSize !== "all" && totalBatches > 1 && (
-                        <span className="text-xs text-muted-foreground"> (lote {safeBatchIndex + 1}/{totalBatches} de {allEligibleRecipients.length})</span>
-                      )}
-                    </p>
+                    <p className="text-success"><span className="text-muted-foreground">Elegíveis:</span> {summary.eligible}</p>
                     <p className="text-warning"><span className="text-muted-foreground">Bloqueados:</span> {summary.blockedOptOut + summary.blockedNoConsent + summary.invalidPhone + summary.duplicates}</p>
                   </div>
                 </CardContent>
