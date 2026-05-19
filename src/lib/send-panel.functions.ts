@@ -165,6 +165,26 @@ export const setCampaignStatusFn = createServerFn({ method: "POST" })
     await assertManager(context.userId);
     const { error } = await supabaseAdmin.from("campaigns").update({ status: data.status }).eq("id", data.campaignId);
     if (error) throw new Error(error.message);
+
+    // Quando pausa/finaliza, drena a fila para parar envios imediatamente.
+    if (data.status === "paused" || data.status === "done") {
+      const { data: recs } = await supabaseAdmin
+        .from("campaign_recipients").select("id").eq("campaign_id", data.campaignId);
+      const ids = (recs ?? []).map((r) => r.id);
+      if (ids.length) {
+        const reason = data.status === "paused"
+          ? "Campanha pausada pelo gestor"
+          : "Campanha finalizada pelo gestor";
+        await supabaseAdmin.from("message_queue")
+          .update({ status: "failed", last_error: reason })
+          .in("status", ["pending", "processing"])
+          .in("campaign_recipient_id", ids);
+        await supabaseAdmin.from("campaign_recipients")
+          .update({ status: "failed", error: reason })
+          .eq("campaign_id", data.campaignId)
+          .eq("status", "queued");
+      }
+    }
     return { ok: true };
   });
 
