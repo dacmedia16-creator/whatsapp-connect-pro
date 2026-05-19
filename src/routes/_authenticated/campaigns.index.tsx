@@ -236,6 +236,8 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
   const [recipientsPage, setRecipientsPage] = useState(0);
   const RECIPIENTS_PAGE_SIZE = 10;
   const [previewLoading, setPreviewLoading] = useState(false);
+  const previewReqIdRef = useRef(0);
+  const previewAbortRef = useRef<AbortController | null>(null);
 
   // step 2
   const [message, setMessage] = useState("Olá {{nome}}, ");
