@@ -120,7 +120,11 @@ export const Route = createFileRoute("/api/public/webhooks/ziontalk")({
             last_message_at: new Date().toISOString(),
             unread_count: (existingConv?.unread_count ?? 0) + 1,
           };
-          if (channelId && !existingConv?.channel_id) patch.channel_id = channelId;
+          // Sempre alinhar canal da conversa com o canal do último inbound,
+          // para que respostas saiam pelo mesmo número.
+          if (channelId && channelId !== existingConv?.channel_id) {
+            patch.channel_id = channelId;
+          }
           await supabaseAdmin.from("conversations").update(patch).eq("id", conversationId);
         }
 
