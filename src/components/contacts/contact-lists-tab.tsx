@@ -1,6 +1,8 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useServerFn } from "@tanstack/react-start";
 import { supabase } from "@/integrations/supabase/client";
+import { addContactsToListFn } from "@/lib/contact-lists.functions";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -16,7 +18,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
   DialogFooter, DialogDescription,
 } from "@/components/ui/dialog";
-import { Plus, Trash2, Pencil, Users, Search, UserPlus, X } from "lucide-react";
+import { Plus, Trash2, Pencil, Users, Search, UserPlus, X, Upload, ListPlus } from "lucide-react";
 import { toast } from "sonner";
 import { formatPhone } from "@/lib/phone";
 
@@ -462,6 +464,21 @@ function ManageListMembersDialog({
           <div className="space-y-2">
             <div className="flex items-center justify-between gap-2">
               <h4 className="text-sm font-medium">Adicionar contatos</h4>
+              <div className="flex items-center gap-1">
+                {canManage && (
+                  <>
+                    <ImportCsvDialog listId={list.id} onDone={() => {
+                      qc.invalidateQueries({ queryKey: ["contact_list_items", list.id] });
+                      qc.invalidateQueries({ queryKey: ["contact_lists_counts"] });
+                      qc.invalidateQueries({ queryKey: ["contacts_for_list_picker"] });
+                    }} />
+                    <BulkManualDialog listId={list.id} onDone={() => {
+                      qc.invalidateQueries({ queryKey: ["contact_list_items", list.id] });
+                      qc.invalidateQueries({ queryKey: ["contact_lists_counts"] });
+                      qc.invalidateQueries({ queryKey: ["contacts_for_list_picker"] });
+                    }} />
+                  </>
+                )}
               {canManage && bulkSel.size > 0 && (
                 <Button
                   size="sm"
@@ -475,6 +492,7 @@ function ManageListMembersDialog({
                   Adicionar {bulkSel.size}
                 </Button>
               )}
+              </div>
             </div>
             <div className="relative">
               <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
@@ -535,6 +553,230 @@ function ManageListMembersDialog({
 
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Fechar</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+type ParsedRow = { name?: string; phone: string; tags?: string[] };
+
+function detectDelimiter(line: string): string {
+  if (line.includes(";")) return ";";
+  if (line.includes("\t")) return "\t";
+  return ",";
+}
+
+function parseCsv(text: string): ParsedRow[] {
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  if (lines.length === 0) return [];
+  const delim = detectDelimiter(lines[0]);
+  const first = lines[0].split(delim).map((c) => c.trim().toLowerCase());
+  const hasHeader = first.some((c) => ["nome", "name", "telefone", "phone", "celular", "tags", "consent"].includes(c));
+  let idxName = -1, idxPhone = -1, idxTags = -1;
+  let dataStart = 0;
+  if (hasHeader) {
+    dataStart = 1;
+    first.forEach((c, i) => {
+      if (["nome", "name"].includes(c)) idxName = i;
+      if (["telefone", "phone", "celular", "fone", "whatsapp"].includes(c)) idxPhone = i;
+      if (c === "tags") idxTags = i;
+    });
+    if (idxPhone < 0) idxPhone = 0;
+    if (idxName < 0) idxName = idxPhone === 0 ? 1 : 0;
+  } else {
+    idxPhone = 0;
+    idxName = 1;
+  }
+  const out: ParsedRow[] = [];
+  for (let i = dataStart; i < lines.length; i++) {
+    const cols = lines[i].split(delim).map((c) => c.trim().replace(/^"|"$/g, ""));
+    const phone = cols[idxPhone] ?? "";
+    if (!phone) continue;
+    const name = idxName >= 0 ? cols[idxName] : undefined;
+    const tagsStr = idxTags >= 0 ? cols[idxTags] : undefined;
+    const tags = tagsStr ? tagsStr.split(/[;|]/).map((t) => t.trim()).filter(Boolean).slice(0, 20) : undefined;
+    out.push({ name: name || undefined, phone, tags });
+  }
+  return out;
+}
+
+function parseManual(text: string): ParsedRow[] {
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const out: ParsedRow[] = [];
+  for (const line of lines) {
+    const parts = line.split(/[,;\t]/).map((p) => p.trim());
+    if (parts.length === 1) {
+      out.push({ phone: parts[0] });
+    } else {
+      const [a, b] = parts;
+      const aIsPhone = /^[+\d\s()-]+$/.test(a) && !/^[+\d\s()-]+$/.test(b);
+      if (aIsPhone) out.push({ phone: a, name: b });
+      else out.push({ name: a, phone: b });
+    }
+  }
+  return out;
+}
+
+function ResultSummary({ s }: { s: { added: number; alreadyInList: number; invalid: number; duplicate: number; optOut: number } }) {
+  return (
+    <div className="text-xs text-muted-foreground">
+      ✓ {s.added} adicionado(s) · {s.alreadyInList} já estava(m) · {s.invalid} inválido(s) · {s.duplicate} duplicado(s) · {s.optOut} opt-out
+    </div>
+  );
+}
+
+function ImportCsvDialog({ listId, onDone }: { listId: string; onDone: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [rows, setRows] = useState<ParsedRow[]>([]);
+  const [fileName, setFileName] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+  const addFn = useServerFn(addContactsToListFn);
+
+  const submit = useMutation({
+    mutationFn: async () => addFn({ data: { listId, source: "import", rows } }),
+    onSuccess: (s) => {
+      toast.success(`${s.added} contato(s) adicionado(s)`, {
+        description: `${s.alreadyInList} já estava(m) · ${s.invalid} inválido(s) · ${s.duplicate} duplicado(s) · ${s.optOut} opt-out`,
+      });
+      onDone();
+      setOpen(false);
+      setRows([]);
+      setFileName("");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const onFile = async (file: File) => {
+    setFileName(file.name);
+    const text = await file.text();
+    const parsed = parseCsv(text);
+    if (parsed.length === 0) {
+      toast.error("Nenhuma linha válida encontrada no arquivo");
+      return;
+    }
+    if (parsed.length > 5000) {
+      toast.error("Limite de 5.000 linhas por importação");
+      return;
+    }
+    setRows(parsed);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) { setRows([]); setFileName(""); } }}>
+      <DialogTrigger asChild>
+        <Button size="sm" variant="outline">
+          <Upload className="h-4 w-4 mr-1" /> Importar CSV
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Importar contatos via CSV</DialogTitle>
+          <DialogDescription>
+            Aceita .csv ou .txt (delimitador vírgula, ponto-e-vírgula ou tab). Colunas reconhecidas: <code>nome</code>, <code>telefone</code>, <code>tags</code>. Se não houver cabeçalho, a 1ª coluna é o telefone.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <input
+            ref={inputRef}
+            type="file"
+            accept=".csv,.txt,text/csv,text/plain"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) onFile(f);
+              e.target.value = "";
+            }}
+          />
+          <Button variant="outline" onClick={() => inputRef.current?.click()}>
+            <Upload className="h-4 w-4 mr-1" /> Escolher arquivo
+          </Button>
+          {fileName && (
+            <div className="text-xs text-muted-foreground">
+              <span className="font-medium">{fileName}</span> — {rows.length} linha(s) lida(s)
+            </div>
+          )}
+          {rows.length > 0 && (
+            <ScrollArea className="h-[220px] border rounded-md">
+              <div className="divide-y text-sm">
+                {rows.slice(0, 200).map((r, i) => (
+                  <div key={i} className="flex items-center gap-2 p-2">
+                    <div className="flex-1 truncate">{r.name || <span className="text-muted-foreground italic">sem nome</span>}</div>
+                    <div className="font-mono text-xs text-muted-foreground">{r.phone}</div>
+                  </div>
+                ))}
+                {rows.length > 200 && (
+                  <div className="p-2 text-xs text-muted-foreground text-center">+{rows.length - 200} linhas…</div>
+                )}
+              </div>
+            </ScrollArea>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button>
+          <Button onClick={() => submit.mutate()} disabled={submit.isPending || rows.length === 0}>
+            Adicionar {rows.length > 0 ? `${rows.length} ` : ""}à lista
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function BulkManualDialog({ listId, onDone }: { listId: string; onDone: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState("");
+  const addFn = useServerFn(addContactsToListFn);
+
+  const rows = useMemo(() => parseManual(text), [text]);
+
+  const submit = useMutation({
+    mutationFn: async () => addFn({ data: { listId, source: "manual", rows } }),
+    onSuccess: (s) => {
+      toast.success(`${s.added} contato(s) adicionado(s)`, {
+        description: `${s.alreadyInList} já estava(m) · ${s.invalid} inválido(s) · ${s.duplicate} duplicado(s) · ${s.optOut} opt-out`,
+      });
+      onDone();
+      setOpen(false);
+      setText("");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) setText(""); }}>
+      <DialogTrigger asChild>
+        <Button size="sm" variant="outline">
+          <ListPlus className="h-4 w-4 mr-1" /> Adicionar em série
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-xl">
+        <DialogHeader>
+          <DialogTitle>Adicionar contatos em série</DialogTitle>
+          <DialogDescription>
+            Uma linha por contato. Formatos aceitos: <code>Nome, Telefone</code> ou apenas <code>Telefone</code>. Até 500 linhas.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-2">
+          <Textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            rows={12}
+            placeholder={"João Silva, +55 11 98888-7777\nMaria, 11977776666\n+55 21 96666 5555"}
+            className="font-mono text-sm"
+          />
+          <div className="text-xs text-muted-foreground">
+            {rows.length} linha(s) detectada(s){rows.length > 500 ? " — máximo 500" : ""}
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button>
+          <Button
+            onClick={() => submit.mutate()}
+            disabled={submit.isPending || rows.length === 0 || rows.length > 500}
+          >
+            Adicionar à lista
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
