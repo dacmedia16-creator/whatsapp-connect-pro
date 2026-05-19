@@ -649,7 +649,11 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
                                 : `${listIds.length} lista(s) · ${lists.filter((l: any) => listIds.includes(l.id)).reduce((a: number, l: any) => a + (l.count ?? 0), 0)} contato(s) na soma bruta (antes de dedupe e validação)`}
                             </p>
                             <Button onClick={runPreview} disabled={listIds.length === 0}>
-                              Calcular destinatários
+                              {previewLoading
+                                ? "Carregando…"
+                                : resolved.length > 0
+                                  ? "Recalcular"
+                                  : "Calcular destinatários"}
                             </Button>
                           </div>
                         </div>
