@@ -659,6 +659,10 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
                       ))}
                     </div>
                   </div>
+                  <div className="space-y-1.5">
+                    <Label>Anexo (opcional)</Label>
+                    <CampaignMediaPicker value={media} onChange={setMedia} />
+                  </div>
                   {warnings.length > 0 && (
                     <div className="rounded-md border border-warning/40 bg-warning/5 p-3 text-xs text-warning space-y-1">
                       {warnings.map((w) => <p key={w}>⚠ {w}</p>)}
