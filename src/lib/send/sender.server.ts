@@ -26,6 +26,36 @@ export function createSenderContext(secret: string | undefined): SenderContext {
   };
 }
 
+// Calcula o próximo instante (ms epoch) em que o canal pode disparar,
+// aplicando delay_seconds com jitter (random_delay_min/max) se configurado.
+function computeNextAvailable(settings: any): number {
+  const min = Number(settings?.random_delay_min);
+  const max = Number(settings?.random_delay_max);
+  let delaySec = Number(settings?.delay_seconds ?? 0) || 0;
+  if (Number.isFinite(min) && Number.isFinite(max) && max >= min && max > 0) {
+    delaySec = Math.floor(min + Math.random() * (max - min + 1));
+  }
+  return Date.now() + Math.max(0, delaySec) * 1000;
+}
+
+// Empurra o próximo item pendente desse canal para não disparar antes do delay.
+async function pushNextScheduledFor(channelId: string, nextAvailableMs: number) {
+  const nextIso = new Date(nextAvailableMs).toISOString();
+  const { data: next } = await supabaseAdmin
+    .from("message_queue")
+    .select("id, scheduled_for")
+    .eq("channel_id", channelId)
+    .eq("status", "pending")
+    .lt("scheduled_for", nextIso)
+    .order("scheduled_for", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (next?.id) {
+    await supabaseAdmin.from("message_queue")
+      .update({ scheduled_for: nextIso }).eq("id", next.id);
+  }
+}
+
 // Processa um item da fila, aplicando todos os 10 passos descritos na especificação.
 export async function processQueueItem(item: any, ctx: SenderContext): Promise<ProcessOutcome> {
   let ch: any = item.channel;
@@ -205,6 +235,12 @@ export async function processQueueItem(item: any, ctx: SenderContext): Promise<P
       last_error: null,
     }).eq("id", ch.id);
     ctx.channelsCache.set(ch.id, { ...ch, sent_today: sentToday + 1, sent_today_date: ctx.today });
+
+    // Pacing: empurra o próximo item pendente desse chip para respeitar o delay.
+    if (settings && (settings.delay_seconds > 0 || settings.random_delay_max > 0)) {
+      await pushNextScheduledFor(ch.id, computeNextAvailable(settings));
+    }
+
     if (item.campaign_recipient_id) {
       await supabaseAdmin.from("campaign_recipients").update({
         status: "sent", sent_at: new Date().toISOString(), channel_id: ch.id,
