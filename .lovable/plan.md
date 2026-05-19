@@ -1,32 +1,37 @@
-## Cancelar/ignorar previews antigos quando a seleção mudar rápido
+## Problema
 
-Hoje, se o usuário marca/desmarca várias listas em sequência, o debounce de 250ms reduz chamadas — mas se duas chamadas já estiverem em voo (ex.: lista grande lenta + nova seleção), a resposta antiga pode chegar depois e sobrescrever `resolved` / `summary` com dados obsoletos. Vou ignorar respostas que não correspondem mais à seleção atual.
+A campanha **Teste** foi marcada como `done`, mas **165 mensagens continuam pendentes na fila** e o worker do cron não verifica o status da campanha antes de enviar — por isso os envios continuaram após o "cancelamento" (último envio às 02:48).
 
-### Mudanças (somente em `src/routes/_authenticated/campaigns.index.tsx`)
+## Solução em 2 partes
 
-1. **Token de requisição** com `useRef<number>(0)` (`previewReqIdRef`):
-   - `runPreview()` incrementa o ref no início e captura o valor local (`myReq`).
-   - Após `await previewFn(...)`, compara `myReq` com `previewReqIdRef.current`. Se diferente, **descarta** a resposta (não chama `setResolved`/`setSummary`/`setPreviewLoading(false)` finais).
-   - Apenas a chamada vencedora aplica resultado e zera `previewLoading`.
+### Parte 1 — Limpar o que ficou para trás (one-shot agora)
 
-2. **AbortController por chamada** (`previewAbortRef`):
-   - Antes de cada `runPreview()`, aborta o controller anterior se existir.
-   - Cria novo `AbortController`, guarda em ref, e passa `signal` para `previewFn({ data, signal })` (TanStack serverFn aceita `signal` no segundo argumento — ou via fetch options). Se a chamada for cancelada, ignorar `AbortError` no catch (sem toast).
-   - Isso libera rede/CPU além do simples descarte.
+Atualizar imediatamente os 165 itens órfãos da campanha `e6c2f445-…`:
 
-3. **Debounce mais robusto no `useEffect`**:
-   - Manter `setTimeout` de 250ms, mas no cleanup também marcar o token atual como inválido (incrementando `previewReqIdRef`) para descartar qualquer resposta pendente da seleção anterior.
-   - Quando `listIds.length === 0`, além de limpar o estado, abortar o controller atual e incrementar o token.
+- `message_queue`: `pending` → `failed` (com `last_error = "Campanha cancelada pelo gestor"`) para os itens dessa campanha
+- `campaign_recipients`: `queued` → `failed` (com `error = "Campanha cancelada"`) para os mesmos
 
-4. **Estado de loading consistente**:
-   - `setPreviewLoading(true)` continua no início. Só vira `false` quando a resposta vencedora retorna (ou em erro não-abort dela). Chamadas descartadas não tocam o flag — assim a UI continua mostrando "Carregando…" até a última requisição válida concluir.
+Resultado: o cron para de tocar nesses itens na próxima execução.
 
-5. **Cleanup ao desmontar/fechar o dialog**:
-   - Em `useEffect` de cleanup do componente (ou ao fechar o modal de criação), abortar o controller pendente e incrementar o token, evitando warning de set state em componente desmontado.
+### Parte 2 — Corrigir o comportamento de "cancelar" para o futuro
 
-### Não muda
-- Lógica de seleção, paginação 10-em-10, checkboxes e backend (`previewRecipientsFn`) ficam intactos.
-- Métodos `tags`/`import`/`manual` continuam manuais, mas se beneficiam da mesma proteção (qualquer clique repetido cancela o anterior).
+Hoje `setCampaignStatusFn` em `src/lib/send-panel.functions.ts` só atualiza `campaigns.status`. Mudar para que, quando o novo status for `paused` ou `done`, também:
 
-### Arquivos alterados
-- `src/routes/_authenticated/campaigns.index.tsx` — refs (`previewReqIdRef`, `previewAbortRef`), ajuste em `runPreview`, `useEffect` de auto-preview e cleanup.
+1. Marque todos os `message_queue.pending`/`processing` daquela campanha como `failed` (motivo: "Campanha pausada/finalizada")
+2. Marque os `campaign_recipients` correspondentes ainda em `queued` como `failed` com `error` explicativo
+3. Quando o status for `paused`, manter os itens como `pending` mas adicionar uma checagem no `processQueueItem` (`src/lib/send/sender.server.ts`): antes de enviar, ler `campaigns.status` da campanha do recipient — se for `paused` ou `done`, reagendar (paused) ou marcar como `failed` (done) sem chamar a Ziontalk.
+
+Assim:
+- **Pausar** = para o envio, mantém a fila para retomar depois
+- **Finalizar (done)** = cancela definitivamente os pendentes
+- **Defesa em profundidade**: mesmo que algum item escape, o sender confere o status da campanha antes de enviar
+
+## Arquivos afetados
+
+- `src/lib/send-panel.functions.ts` — expandir `setCampaignStatusFn`
+- `src/lib/send/sender.server.ts` — adicionar checagem do status da campanha no início de `processQueueItem`
+- SQL one-shot (via insert tool) para limpar os 165 órfãos atuais
+
+## Observação
+
+Não vou mexer no schema nem em RLS — só lógica de aplicação e um update pontual de dados.
