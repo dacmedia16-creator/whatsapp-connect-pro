@@ -1,37 +1,36 @@
 ## Problema
 
-A cada mensagem recebida do mesmo contato, uma nova conversa é criada na caixa de entrada em vez de agrupar tudo numa só thread.
+Quando você responde na caixa de entrada, a mensagem sai por um canal diferente daquele em que o cliente escreveu.
 
-Diagnóstico (banco confirma): o contato `7cc2…ccefd` já tem **6 conversas** duplicadas, sendo 4 criadas hoje em poucos minutos.
+## Causa
 
-## Causa raiz no webhook (`src/routes/api/public/webhooks/ziontalk.ts`)
+No envio (`src/routes/_authenticated/inbox.tsx` linha 306), a resposta é enviada por `conv.channel_id`. Já o webhook (`src/routes/api/public/webhooks/ziontalk.ts`), na correção anterior, **só preenche** `conversations.channel_id` quando ele está **null**:
 
-1. A busca por conversa existente usa `.maybeSingle()`. Quando já existem 2+ conversas para o mesmo contato, o Postgres retorna erro de "multiple rows", `existingConv` vira `null` e o handler **cria mais uma** — efeito bola de neve.
-2. O filtro é `eq("channel_id", channelId)` quando `channelId` existe. Se a conversa antiga foi salva com `channel_id = null` (payload sem `to`/`channel`) e a nova mensagem chega com canal identificado, não casa → nova conversa.
-3. Quando o payload não traz `to`/`channel`, `channelId` é `null` e não tentamos descobrir o canal por outro meio.
+```ts
+if (channelId && !existingConv?.channel_id) patch.channel_id = channelId;
+```
 
-## Plano de correção
+Resultado: se a conversa foi criada/marcada com o canal A e o cliente depois escreve para o canal B, a conversa continua marcada como canal A — e a resposta sai pelo A.
 
-### 1. Corrigir lookup de conversa no webhook
-Trocar a query por uma busca tolerante:
-- Buscar **a conversa mais recente** do contato (`order by last_message_at desc limit 1`), independentemente de `channel_id`, em vez de `maybeSingle()` com filtro estrito.
-- Se a conversa encontrada tiver `channel_id = null` e o webhook agora identificou o canal, fazer `update` preenchendo `channel_id`.
-- Só criar nova conversa se realmente não existir nenhuma para aquele contato.
+(As mensagens individuais já guardam `sent_via_channel_id` corretamente, então o histórico está certo; o problema é só no roteamento da resposta.)
 
-Isso elimina duplicação tanto pelo erro do `maybeSingle` quanto pelo descasamento de canal.
+## Plano
 
-### 2. Migração de limpeza (dados já duplicados)
-Criar migração que, para cada `contact_id` com múltiplas conversas:
-- Escolhe a conversa mais antiga como "canônica".
-- `UPDATE messages SET conversation_id = canônica` movendo todas as mensagens.
-- Soma `unread_count` na canônica e atualiza `last_message_at` para o maior valor.
-- Preenche `channel_id` da canônica se estiver null e alguma duplicata tiver.
-- `DELETE` das conversas duplicadas.
+### 1. Webhook: sempre alinhar o canal da conversa com o último canal recebido
+Em `src/routes/api/public/webhooks/ziontalk.ts`, mudar a regra para:
 
-### 3. (Opcional, recomendado) Índice único parcial
-Adicionar `CREATE UNIQUE INDEX conversations_one_per_contact ON conversations(contact_id);` para impedir nova duplicação no nível do banco. **Confirmar antes de aplicar** — isso bloqueia o caso "mesmo contato em 2 canais diferentes ter 2 conversas". Se você quiser manter conversas separadas por canal no futuro, pulamos este passo e ficamos só com (1)+(2).
+- Se o payload identificou `channelId` e ele é **diferente** do `existingConv.channel_id`, atualizar `channel_id` da conversa para o novo.
+- Se o payload não identificou canal, manter o anterior (não sobrescrever com null).
+
+Isso garante que a próxima resposta saia pelo mesmo número onde o cliente escreveu por último.
+
+### 2. UI: deixar o atendente forçar outro canal (opcional, peça se quiser)
+No painel da conversa, adicionar um seletor "Enviar por: [canal]" com o canal atual pré-selecionado e a opção de trocar antes de enviar. **Só faço isso se você confirmar** — a correção do item 1 já resolve o caso descrito.
+
+### 3. Sem mudanças de schema, sem migração de dados
+A correção entra em vigor na próxima mensagem que o cliente enviar (o webhook vai recalibrar o canal da conversa naquele momento).
 
 ## Fora de escopo
-- Não mexer no envio de campanhas.
-- Não mexer no schema de `messages`.
-- Não alterar UI da caixa de entrada — ela já agrupa por `conversation_id`, o bug é só na criação.
+- Envio de campanha.
+- Layout da inbox.
+- Lógica de atribuição/atendente.
