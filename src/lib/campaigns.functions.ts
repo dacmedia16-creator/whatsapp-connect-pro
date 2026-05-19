@@ -235,6 +235,9 @@ export const createCampaignFn = createServerFn({ method: "POST" })
         if (!c.phone_e164) continue;
         if (c.opt_out_at) continue;
         if (!c.consent) continue;
+        // Honra a subseleção do cliente: só inclui telefones que o usuário
+        // marcou na UI. Servidor continua autoritativo para consent/opt-out.
+        if (!clientPhones.has(c.phone_e164)) continue;
         serverEligible++;
         contactIds.push(c.id);
       }
@@ -257,6 +260,7 @@ export const createCampaignFn = createServerFn({ method: "POST" })
         if (!c.phone_e164) continue;
         if (c.opt_out_at) continue;
         if (!c.consent) continue;
+        if (!clientPhones.has(c.phone_e164)) continue;
         serverEligible++;
         contactIds.push(c.id);
       }
