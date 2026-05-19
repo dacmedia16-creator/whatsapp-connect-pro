@@ -708,7 +708,19 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
                   {(resolved.length > 0 || method) && (
                     <>
                       <ComplianceSummary summary={summary} />
-                      <RecipientTable contacts={resolved} />
+                      {resolved.length === 0 ? (
+                        <RecipientTable contacts={resolved} />
+                      ) : (
+                        <SelectableRecipients
+                          resolved={resolved}
+                          excludedKeys={excludedKeys}
+                          setExcludedKeys={setExcludedKeys}
+                          page={recipientsPage}
+                          setPage={setRecipientsPage}
+                          pageSize={RECIPIENTS_PAGE_SIZE}
+                          keyFor={keyFor}
+                        />
+                      )}
                     </>
                   )}
                 </CardContent>
