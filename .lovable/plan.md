@@ -1,36 +1,43 @@
-## Problema
+## Verificação — resultado
 
-Quando você responde na caixa de entrada, a mensagem sai por um canal diferente daquele em que o cliente escreveu.
+Rodei o cruzamento de `conversations.channel_id` com o `sent_via_channel_id` do último inbound de cada conversa:
 
-## Causa
+| Conversas | Resultado |
+|---|---|
+| 17 conversas analisadas | nenhuma com inbound carregando canal |
+| Único caso com inbounds reais (contato Denis, 10 mensagens recentes) | **todas com `sent_via_channel_id = NULL`** |
+| Conversa do Denis | marcada como "Envio 1" desde a criação, nunca foi recalibrada |
 
-No envio (`src/routes/_authenticated/inbox.tsx` linha 306), a resposta é enviada por `conv.channel_id`. Já o webhook (`src/routes/api/public/webhooks/ziontalk.ts`), na correção anterior, **só preenche** `conversations.channel_id` quando ele está **null**:
+Ou seja: a correção do webhook **não falhou**, mas também **não tem efeito hoje**, porque o webhook nunca consegue identificar o canal de destino do payload da ZionTalk — todos os inbounds entram com `channelId = null`. Como o código só atualiza `conversations.channel_id` quando o canal vem identificado, ele sempre mantém o canal antigo (o da campanha original).
 
-```ts
-if (channelId && !existingConv?.channel_id) patch.channel_id = channelId;
-```
+## Causa provável
 
-Resultado: se a conversa foi criada/marcada com o canal A e o cliente depois escreve para o canal B, a conversa continua marcada como canal A — e a resposta sai pelo A.
+Em `src/routes/api/public/webhooks/ziontalk.ts`, o `flattenZionPayload` procura o canal de destino em:
+- `r.to`, `r.channel`, `r.mobile_phone` (formato plano)
+- `mensagem.canal`, `mensagem.channel`, `mensagem.destino` (formato aninhado)
 
-(As mensagens individuais já guardam `sent_via_channel_id` corretamente, então o histórico está certo; o problema é só no roteamento da resposta.)
+Se a ZionTalk envia o número de destino em outra chave (ex.: `to_number`, `destination`, `instance`, `connectedPhone`, `receiver`), nada bate e `toPhone` fica `null` → `channelId` fica `null` → a conversa nunca é recalibrada.
+
+Não temos como adivinhar a chave certa sem ver o payload real.
 
 ## Plano
 
-### 1. Webhook: sempre alinhar o canal da conversa com o último canal recebido
-Em `src/routes/api/public/webhooks/ziontalk.ts`, mudar a regra para:
+### 1. Logar o payload bruto recebido
+Adicionar `console.log("[ziontalk webhook] payload:", JSON.stringify(raw))` no início do handler (após o `request.json()`, antes do flatten). Os logs aparecem em `stack_modern--server-function-logs` filtrando por `ziontalk webhook`.
 
-- Se o payload identificou `channelId` e ele é **diferente** do `existingConv.channel_id`, atualizar `channel_id` da conversa para o novo.
-- Se o payload não identificou canal, manter o anterior (não sobrescrever com null).
+### 2. Você dispara uma mensagem de teste
+Cliente manda 1 mensagem para cada um dos 4 números (Envio 1 a 4). Eu leio os logs e identifico qual chave traz o número de destino.
 
-Isso garante que a próxima resposta saia pelo mesmo número onde o cliente escreveu por último.
+### 3. Atualizar `flattenZionPayload`
+Adicionar as chaves descobertas no fallback, garantindo que `to` seja preenchido. A partir daí:
+- novos inbounds salvam `messages.sent_via_channel_id` correto;
+- `conversations.channel_id` é atualizado para o canal que recebeu a mensagem;
+- sua resposta sai pelo mesmo número.
 
-### 2. UI: deixar o atendente forçar outro canal (opcional, peça se quiser)
-No painel da conversa, adicionar um seletor "Enviar por: [canal]" com o canal atual pré-selecionado e a opção de trocar antes de enviar. **Só faço isso se você confirmar** — a correção do item 1 já resolve o caso descrito.
-
-### 3. Sem mudanças de schema, sem migração de dados
-A correção entra em vigor na próxima mensagem que o cliente enviar (o webhook vai recalibrar o canal da conversa naquele momento).
+### 4. (Opcional, após validação) Recalibrar conversas antigas
+Como inbounds antigos não têm `sent_via_channel_id`, não dá para "consertar retroativamente" — esse dado se perdeu. Conversas existentes continuam com o canal antigo até o cliente escrever de novo (aí o webhook recalibra).
 
 ## Fora de escopo
-- Envio de campanha.
-- Layout da inbox.
-- Lógica de atribuição/atendente.
+- Mudanças no envio de campanha.
+- UI da inbox.
+- Nenhuma migração de schema.
