@@ -25,7 +25,7 @@ function periodStart(days: number) {
 
 export const Route = createFileRoute("/_authenticated/reports")({
   component: ReportsPage,
-  head: () => ({ meta: [{ title: "Relatórios — ZionFlow" }] }),
+  head: () => ({ meta: [{ title: "Relatórios — Denis Envia Flow" }] }),
 });
 
 function ReportsPage() {

@@ -27,7 +27,7 @@ import {
 
 export const Route = createFileRoute("/_authenticated/campaigns/$campaignId")({
   component: CampaignDetail,
-  head: () => ({ meta: [{ title: "Campanha — ZionFlow" }] }),
+  head: () => ({ meta: [{ title: "Campanha — Denis Envia Flow" }] }),
 });
 
 function CampaignDetail() {

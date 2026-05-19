@@ -33,7 +33,7 @@ import { ptBR } from "date-fns/locale";
 
 export const Route = createFileRoute("/_authenticated/channels")({
   component: ChannelsPage,
-  head: () => ({ meta: [{ title: "Canais — ZionFlow" }] }),
+  head: () => ({ meta: [{ title: "Canais — Denis Envia Flow" }] }),
 });
 
 function ChannelsPage() {

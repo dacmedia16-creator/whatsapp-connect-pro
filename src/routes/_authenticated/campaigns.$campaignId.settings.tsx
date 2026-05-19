@@ -20,7 +20,7 @@ import {
 
 export const Route = createFileRoute("/_authenticated/campaigns/$campaignId/settings")({
   component: CampaignSendSettingsPage,
-  head: () => ({ meta: [{ title: "Configurações de Envio — ZionFlow" }] }),
+  head: () => ({ meta: [{ title: "Configurações de Envio — Denis Envia Flow" }] }),
 });
 
 type FormState = SendSettingsState;

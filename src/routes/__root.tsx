@@ -87,19 +87,19 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "ZionFlow — Campanhas e atendimento via WhatsApp" },
+      { title: "Denis Envia Flow — Campanhas e atendimento via WhatsApp" },
       {
         name: "description",
         content:
           "Plataforma profissional para campanhas autorizadas e atendimento centralizado via WhatsApp (API ZionTalk).",
       },
-      { name: "author", content: "ZionFlow" },
-      { property: "og:title", content: "ZionFlow — Campanhas e atendimento via WhatsApp" },
+      { name: "author", content: "Denis Envia Flow" },
+      { property: "og:title", content: "Denis Envia Flow — Campanhas e atendimento via WhatsApp" },
       { property: "og:description", content: "WhatsApp Connect Pro is a web application for managing WhatsApp campaigns and customer service." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
       { name: "twitter:site", content: "@Lovable" },
-      { name: "twitter:title", content: "ZionFlow — Campanhas e atendimento via WhatsApp" },
+      { name: "twitter:title", content: "Denis Envia Flow — Campanhas e atendimento via WhatsApp" },
       { name: "description", content: "WhatsApp Connect Pro is a web application for managing WhatsApp campaigns and customer service." },
       { name: "twitter:description", content: "WhatsApp Connect Pro is a web application for managing WhatsApp campaigns and customer service." },
       { property: "og:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/8861bd72-3262-42b5-9943-8054ee0b8a2f/id-preview-3e3a2dee--585204a2-74f0-449f-a6d0-bcdd43afa71b.lovable.app-1779069102802.png" },

@@ -11,7 +11,7 @@ import { MessageSquareText } from "lucide-react";
 
 export const Route = createFileRoute("/signup")({
   component: SignupPage,
-  head: () => ({ meta: [{ title: "Criar conta — ZionFlow" }] }),
+  head: () => ({ meta: [{ title: "Criar conta — Denis Envia Flow" }] }),
 });
 
 function SignupPage() {
@@ -51,7 +51,7 @@ function SignupPage() {
       <div className="hidden lg:flex flex-col justify-between p-12 bg-sidebar text-sidebar-foreground">
         <div className="flex items-center gap-2">
           <MessageSquareText className="h-6 w-6 text-gold" />
-          <span className="font-display text-2xl">ZionFlow</span>
+          <span className="font-display text-2xl">Denis Envia Flow</span>
         </div>
         <div className="space-y-3">
           <h1 className="font-display text-4xl leading-tight">Comece a operar com transparência.</h1>
@@ -59,7 +59,7 @@ function SignupPage() {
             O primeiro usuário criado vira administrador da workspace.
           </p>
         </div>
-        <p className="text-xs text-sidebar-foreground/50">© ZionFlow</p>
+        <p className="text-xs text-sidebar-foreground/50">© Denis Envia Flow</p>
       </div>
 
       <div className="flex items-center justify-center p-8">

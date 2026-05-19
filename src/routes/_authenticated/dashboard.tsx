@@ -28,7 +28,7 @@ import {
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
   component: DashboardPage,
-  head: () => ({ meta: [{ title: "Dashboard — ZionFlow" }] }),
+  head: () => ({ meta: [{ title: "Dashboard — Denis Envia Flow" }] }),
 });
 
 function DashboardPage() {
