@@ -360,6 +360,46 @@ export function SendSettingsForm({
 
       <Card>
         <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <Layers className="h-4 w-4" /> Lotes sincronizados
+          </CardTitle>
+          <CardDescription>
+            Quando ligado, todos os canais disparam ao mesmo tempo (1 mensagem cada), aguardam a pausa, e disparam o próximo lote.
+            Quando desligado, cada chip segue seu próprio relógio (throughput máximo).
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between p-3 border rounded-md">
+            <div>
+              <Label className="text-sm">Sincronizar lotes paralelos</Label>
+              <p className="text-xs text-muted-foreground">
+                Padrão desligado. Ligar dá ritmo previsível, mas reduz a velocidade total.
+              </p>
+            </div>
+            <Switch
+              checked={form.batch_mode}
+              onCheckedChange={(v) => set("batch_mode", v)}
+            />
+          </div>
+          {form.batch_mode && (
+            <div className="space-y-1">
+              <Label>Pausa entre lotes (segundos)</Label>
+              <Input
+                type="number"
+                min={0}
+                value={form.batch_pause_seconds ?? 60}
+                onChange={(e) => set("batch_pause_seconds", e.target.value === "" ? null : Number(e.target.value))}
+              />
+              <p className="text-xs text-muted-foreground">
+                Tempo de espera entre uma rajada e a próxima. Com {form.selected_channel_ids.length || "N"} chips, cada rajada envia {form.selected_channel_ids.length || "N"} mensagens ao mesmo tempo.
+              </p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle className="text-base">Janela de envio</CardTitle>
           <CardDescription>Horário e dias da semana em que os envios podem ocorrer.</CardDescription>
         </CardHeader>
