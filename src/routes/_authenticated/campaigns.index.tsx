@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { supabase } from "@/integrations/supabase/client";
@@ -236,6 +236,8 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
   const [recipientsPage, setRecipientsPage] = useState(0);
   const RECIPIENTS_PAGE_SIZE = 10;
   const [previewLoading, setPreviewLoading] = useState(false);
+  const previewReqIdRef = useRef(0);
+  const previewAbortRef = useRef<AbortController | null>(null);
 
   // step 2
   const [message, setMessage] = useState("Olá {{nome}}, ");
@@ -308,18 +310,26 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
   });
 
   async function runPreview() {
+    // Token para descartar respostas obsoletas + abort da chamada anterior.
+    const myReq = ++previewReqIdRef.current;
+    if (previewAbortRef.current) {
+      try { previewAbortRef.current.abort(); } catch {}
+    }
+    const ac = new AbortController();
+    previewAbortRef.current = ac;
     try {
       setPreviewLoading(true);
       let res: { contacts: ResolvedContact[]; summary: ResolveSummary } | null = null;
       if (method === "list" && listIds.length) {
-        res = await previewFn({ data: { method: "list", listIds } });
+        res = await previewFn({ data: { method: "list", listIds }, signal: ac.signal });
       } else if (method === "tags" && tagSelection.length) {
-        res = await previewFn({ data: { method: "tags", tags: tagSelection, match: tagMatch } });
+        res = await previewFn({ data: { method: "tags", tags: tagSelection, match: tagMatch }, signal: ac.signal });
       } else if (method === "manual" && manualRows.length) {
-        res = await previewFn({ data: { method: "manual", rows: manualRows } });
+        res = await previewFn({ data: { method: "manual", rows: manualRows }, signal: ac.signal });
       } else if (method === "import" && importedRows.length) {
-        res = await previewFn({ data: { method: "import", rows: importedRows } });
+        res = await previewFn({ data: { method: "import", rows: importedRows }, signal: ac.signal });
       }
+      if (myReq !== previewReqIdRef.current) return; // stale, ignora
       if (res) {
         setResolved(res.contacts);
         setSummary(res.summary);
@@ -332,9 +342,11 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
         setRecipientsPage(0);
       }
     } catch (e: any) {
+      if (myReq !== previewReqIdRef.current) return; // stale, silencia
+      if (e?.name === "AbortError" || ac.signal.aborted) return;
       toast.error(e.message ?? "Falha ao calcular destinatários");
     } finally {
-      setPreviewLoading(false);
+      if (myReq === previewReqIdRef.current) setPreviewLoading(false);
     }
   }
 
@@ -342,6 +354,9 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
   useEffect(() => {
     if (method !== "list") return;
     if (listIds.length === 0) {
+      previewReqIdRef.current++;
+      if (previewAbortRef.current) { try { previewAbortRef.current.abort(); } catch {} }
+      setPreviewLoading(false);
       setResolved([]);
       setSummary(emptySummary());
       setExcludedKeys(new Set());
@@ -349,9 +364,22 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
       return;
     }
     const t = setTimeout(() => { runPreview(); }, 250);
-    return () => clearTimeout(t);
+    return () => {
+      clearTimeout(t);
+      // invalida qualquer resposta em voo desta seleção
+      previewReqIdRef.current++;
+      if (previewAbortRef.current) { try { previewAbortRef.current.abort(); } catch {} }
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [method, listIds.join("|")]);
+
+  // Cleanup ao desmontar.
+  useEffect(() => {
+    return () => {
+      previewReqIdRef.current++;
+      if (previewAbortRef.current) { try { previewAbortRef.current.abort(); } catch {} }
+    };
+  }, []);
 
   // Manual form
   const [mName, setMName] = useState("");
