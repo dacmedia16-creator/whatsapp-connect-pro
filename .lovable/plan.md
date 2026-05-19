@@ -1,59 +1,53 @@
 ## Problema
 
-O sender ignora `delay_seconds` e `random_delay_min/max`. Resultado: 14 envios em 7 segundos quando deveriam ter ~25-30s de espaçamento. O cron pega 25 itens e dispara um atrás do outro.
+Ao clicar em **Excluir** na campanha "Teste", o backend tenta apagar a linha de `campaigns`, mas a tabela `messages` (histórico de conversas na caixa de entrada) tem uma FK `messages.campaign_id → campaigns.id` **sem `ON DELETE`**. Como existem mensagens enviadas vinculadas à campanha, o Postgres bloqueia:
 
-## Solução: pacing por canal via `scheduled_for` (sem dormir no worker)
-
-Não dá pra simplesmente `setTimeout` no Worker do Cloudflare — invocações de cron são curtas e custosas. A correção é **agendar cada item** para o futuro depois que um envio é feito no mesmo canal. O cron só processa itens com `scheduled_for <= now()`, então o pacing emerge naturalmente.
-
-### Mudanças
-
-**1. `src/lib/send/sender.server.ts` — depois de cada envio bem-sucedido**
-
-Logo após marcar o item como `sent`, calcular o próximo horário em que o canal `ch` pode disparar:
-
-```text
-nextAvailable = now + jitter(delay_seconds, random_delay_min, random_delay_max)
+```
+update or delete on table "campaigns" violates foreign key constraint
+"messages_campaign_id_fkey" on table "messages"
 ```
 
-E fazer um `UPDATE message_queue SET scheduled_for = GREATEST(scheduled_for, nextAvailable) WHERE channel_id = ch.id AND status='pending' AND scheduled_for < nextAvailable` (limitado ao próximo item pendente para evitar update gigante — usar subquery com `LIMIT 1` ordenado por `scheduled_for`).
+A rotina de exclusão hoje (`campaigns.index.tsx`) só limpa `message_queue`, `campaign_recipients` e `campaign_events` — esqueceu de `messages` (e provavelmente também de `send_logs`, que tem `campaign_id`).
 
-Isso garante que o **próximo item do mesmo chip** só seja elegível depois do delay configurado. Como `pickChannel` pode trocar o `channel_id` no momento do envio, vou empurrar o próximo item pendente desse canal mesmo que originalmente fosse de outro.
+## Decisão de design
 
-**2. Função `jitter()` (mesmo arquivo, helper local)**
+Mensagens da caixa de entrada **não devem ser apagadas** junto com a campanha — elas pertencem à conversa do contato e o usuário precisa continuar vendo o histórico. Mesma lógica vale para `send_logs` (auditoria).
 
-```text
-delay = delay_seconds
-if random_delay_min/max definidos → delay = random_int(min, max)
-return now + delay * 1000ms
+Solução: alterar as FKs para **`ON DELETE SET NULL`** nas tabelas que são "histórico/auditoria", e manter `DELETE` em cascata apenas para tabelas operacionais da campanha.
+
+## Plano
+
+### 1. Migration — ajustar FKs
+
+| Tabela | Coluna | Ação atual | Ação nova |
+|---|---|---|---|
+| `messages` | `campaign_id` | (nada → bloqueia) | `ON DELETE SET NULL` |
+| `send_logs` | `campaign_id` | verificar | `ON DELETE SET NULL` |
+| `campaign_recipients` | `campaign_id` | já tratado no código | `ON DELETE CASCADE` (defesa em profundidade) |
+| `campaign_events` | `campaign_id` | já tratado no código | `ON DELETE CASCADE` |
+| `message_queue` | `campaign_id` (via recipient) | já tratado | manter |
+| `campaign_send_settings` | `campaign_id` | verificar | `ON DELETE CASCADE` |
+
+Drop + recreate de cada constraint com a regra apropriada.
+
+### 2. Simplificar `deleteCampaign` no frontend
+
+Com as FKs corretas, basta:
+
+```ts
+await supabase.from("campaigns").delete().eq("id", id);
 ```
 
-**3. `src/lib/send/channel-selector.server.ts` — respeitar último envio no `pickChannel`**
+Remover os `delete` manuais de `message_queue` / `campaign_recipients` / `campaign_events` (a cascata do banco cuida). Manter apenas o do `message_queue` se preferir limpeza imediata; o resto fica redundante.
 
-Hoje `pickChannel` já checa `max_per_minute` via `recentSends`. Adicionar mais uma checagem: se o último envio nesse canal foi há menos que `delay_seconds`, pular pra próximo candidato no round-robin. Isso evita que itens já-elegíveis (que ficaram parados antes de a regra ser aplicada) saiam todos juntos.
+### 3. Renomear botão (opcional, UX)
 
-Pra isso, expor `lastSendAt(channelId)` em `rate-limit.server.ts` (ou um `MIN(created_at)` invertido — na verdade `MAX(created_at)`) usando `send_logs`.
+O título do diálogo é "Excluir campanha?" mas o usuário descreveu como "cancelar". Sugiro deixar claro na mensagem que a campanha será **excluída permanentemente** mas o **histórico de mensagens enviadas permanece na caixa de entrada**.
 
-**4. `src/routes/api/public/hooks/process-queue.ts` — sem mudanças**
+### 4. Validação
 
-Continua claimando 25 itens e processando em loop. O pacing vem do `scheduled_for` empurrado e da checagem de `pickChannel`.
+- Recriar uma campanha de teste, executar alguns envios, e clicar em Excluir → deve sumir da lista sem erro, e as mensagens continuam visíveis na Caixa de entrada (sem vínculo de campanha).
 
-### Como fica na prática (delay=30s, 4 chips)
+## Observação
 
-- t=0s: cron pega 4 itens (um por chip), envia todos. Cada chip ganha `nextAvailable = t+30s`.
-- t=1m: cron roda. Outros itens estão `pending` mas o de cada chip que ficou pra trás tem `scheduled_for = t+30s` < now → processa. Pacing per-channel = 30s, throughput agregado ≈ 4/30s.
-
-## Arquivos afetados
-
-- `src/lib/send/sender.server.ts` (push `scheduled_for` após sucesso, helper `jitter`)
-- `src/lib/send/channel-selector.server.ts` (gate `lastSendAt < delay`)
-- `src/lib/send/rate-limit.server.ts` (nova função `lastSendAt(channelId)`)
-
-## Fora de escopo
-
-- `max_per_minute`/`max_per_hour` já são checados pelo `pickChannel` — sem alteração
-- Janela de horário/dia da semana — já tratado em outro fluxo
-
-## Observação sobre o backfill atual
-
-Os 165 itens restantes desta campanha já foram cancelados (status `failed`). Quando você criar uma nova campanha, o novo pacing já vai valer.
+Não vou tocar em RLS, lógica de envio, ou settings nesta entrega — só a cadeia de exclusão.
