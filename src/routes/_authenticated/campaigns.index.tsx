@@ -92,12 +92,6 @@ function CampaignsPage() {
 
   const deleteCampaign = useMutation({
     mutationFn: async (id: string) => {
-      await supabase.from("message_queue").delete().in(
-        "campaign_recipient_id",
-        (await supabase.from("campaign_recipients").select("id").eq("campaign_id", id)).data?.map((r) => r.id) ?? [],
-      );
-      await supabase.from("campaign_recipients").delete().eq("campaign_id", id);
-      await supabase.from("campaign_events").delete().eq("campaign_id", id);
       const { error } = await supabase.from("campaigns").delete().eq("id", id);
       if (error) throw error;
     },
