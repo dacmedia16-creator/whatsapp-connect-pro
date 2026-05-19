@@ -61,6 +61,8 @@ type Campaign = {
   scheduled_at: string | null;
   total_recipients: number;
   created_at: string;
+  media_url?: string | null;
+  media_type?: string | null;
 };
 
 const STATUS_LABELS: Record<Campaign["status"], { label: string; cls: string }> = {
@@ -145,6 +147,9 @@ function CampaignsPage() {
                     <Link to="/campaigns/$campaignId" params={{ campaignId: c.id }} className="font-medium hover:underline">
                       {c.name}
                     </Link>
+                    {c.media_url && (
+                      <span className="ml-2 text-xs text-muted-foreground" title={`Anexo: ${c.media_type}`}>📎</span>
+                    )}
                     {c.description && <p className="text-xs text-muted-foreground line-clamp-1">{c.description}</p>}
                   </TableCell>
                   <TableCell>
