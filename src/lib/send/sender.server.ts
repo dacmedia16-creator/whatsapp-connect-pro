@@ -260,6 +260,9 @@ export async function processQueueItem(item: any, ctx: SenderContext): Promise<P
     await supabaseAdmin.from("messages").insert({
       conversation_id: convId, direction: "out", body: item.rendered_text,
       sent_via_channel_id: ch.id, campaign_id: campaignId,
+      attachments: media
+        ? [{ url: media.url, filename: media.filename, mime: media.mime }]
+        : [],
     });
     return "sent";
   }
