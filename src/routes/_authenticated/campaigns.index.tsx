@@ -286,6 +286,11 @@ function NewCampaignWizard({ onDone }: { onDone: () => void }) {
     enabled: open && method === "list",
   });
 
+  useEffect(() => {
+    const pageCount = Math.max(1, Math.ceil(lists.length / 10));
+    if (listsPage >= pageCount) setListsPage(0);
+  }, [lists.length, listsPage]);
+
   const { data: tagOptions = [] } = useQuery({
     queryKey: ["all-tags"],
     queryFn: async () => {
