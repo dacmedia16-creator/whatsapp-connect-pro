@@ -323,6 +323,25 @@ function CampaignDetail() {
         <CardContent className="p-4 space-y-2">
           <h3 className="font-medium">Mensagem</h3>
           <p className="text-sm whitespace-pre-wrap bg-muted/40 rounded p-3 border">{campaign.message_template}</p>
+          {(campaign as any).media_url && (
+            <div className="mt-2">
+              <p className="text-xs text-muted-foreground mb-1">Anexo: {(campaign as any).media_filename}</p>
+              {(campaign as any).media_type === "image" && (
+                <img src={(campaign as any).media_url} alt={(campaign as any).media_filename} className="max-h-64 rounded border" />
+              )}
+              {(campaign as any).media_type === "video" && (
+                <video src={(campaign as any).media_url} controls className="max-h-64 rounded border" />
+              )}
+              {(campaign as any).media_type === "audio" && (
+                <audio src={(campaign as any).media_url} controls className="w-full max-w-md" />
+              )}
+              {(campaign as any).media_type === "document" && (
+                <a href={(campaign as any).media_url} target="_blank" rel="noreferrer" className="text-primary underline text-sm">
+                  Abrir documento
+                </a>
+              )}
+            </div>
+          )}
         </CardContent>
       </Card>
 
