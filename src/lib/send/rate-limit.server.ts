@@ -70,3 +70,16 @@ export async function recentSends(channelId: string, sinceMs: number): Promise<n
     .gte("http_status", 200).lt("http_status", 300);
   return count ?? 0;
 }
+
+// Retorna o timestamp do último envio bem-sucedido do canal (ou null).
+export async function lastSendAt(channelId: string): Promise<Date | null> {
+  const { data } = await supabaseAdmin
+    .from("send_logs")
+    .select("created_at")
+    .eq("channel_id", channelId)
+    .gte("http_status", 200).lt("http_status", 300)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return data?.created_at ? new Date(data.created_at) : null;
+}
