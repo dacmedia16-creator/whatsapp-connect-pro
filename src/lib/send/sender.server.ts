@@ -12,7 +12,6 @@ export type SenderContext = SelectorContext & {
   secret: string | undefined;
   keyCache: Map<string, string | null>;
   mediaCache: Map<string, { url: string; filename: string; mime: string } | null>;
-  finishChecked: Set<string>;
   batchPushed: Set<string>;
 };
 
@@ -25,7 +24,6 @@ export function createSenderContext(secret: string | undefined): SenderContext {
     secret,
     keyCache: new Map(),
     mediaCache: new Map(),
-    finishChecked: new Set(),
     batchPushed: new Set(),
   };
 }
@@ -101,11 +99,9 @@ async function pushBatchScheduledFor(
 }
 
 // Marca a campanha como `done` se não restarem destinatários `queued`
-// nem itens na `message_queue` em `pending`/`processing`.
-async function maybeFinishCampaign(ctx: SenderContext, campaignId: string) {
-  if (ctx.finishChecked.has(campaignId)) return;
-  ctx.finishChecked.add(campaignId);
-
+// nem itens na `message_queue` em `pending`/`processing` para a campanha.
+// Cada item processado re-checa — o último vê fila zerada e finaliza.
+async function maybeFinishCampaign(_ctx: SenderContext, campaignId: string) {
   const { count: queued } = await supabaseAdmin
     .from("campaign_recipients")
     .select("id", { count: "exact", head: true })
@@ -113,15 +109,19 @@ async function maybeFinishCampaign(ctx: SenderContext, campaignId: string) {
     .eq("status", "queued");
   if ((queued ?? 0) > 0) return;
 
-  const { data: pendingItems } = await supabaseAdmin
-    .from("message_queue")
-    .select("id, recipient:campaign_recipients(campaign_id)")
-    .in("status", ["pending", "processing"])
-    .limit(500);
-  const stillPending = (pendingItems ?? []).some(
-    (it: any) => it?.recipient?.campaign_id === campaignId,
-  );
-  if (stillPending) return;
+  const { data: recs } = await supabaseAdmin
+    .from("campaign_recipients")
+    .select("id")
+    .eq("campaign_id", campaignId);
+  const recIds = (recs ?? []).map((r: any) => r.id);
+  if (recIds.length) {
+    const { count: pending } = await supabaseAdmin
+      .from("message_queue")
+      .select("id", { count: "exact", head: true })
+      .in("campaign_recipient_id", recIds)
+      .in("status", ["pending", "processing"]);
+    if ((pending ?? 0) > 0) return;
+  }
 
   await supabaseAdmin
     .from("campaigns")

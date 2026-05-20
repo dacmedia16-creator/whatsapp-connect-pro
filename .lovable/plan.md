@@ -1,91 +1,78 @@
-# Melhorar controle de delay e previsibilidade dos envios
+# Bug: campanhas não viram "Concluída" quando terminam
 
-## O que muda pra você
+## Causa raiz
 
-Duas adições no formulário de configuração de envio da campanha:
+Em `src/lib/send/sender.server.ts`, a função `maybeFinishCampaign` tem **dois defeitos** que se combinam e impedem a transição `running → done`:
 
-### 1. Previsão de duração (sempre visível)
-
-Um card no topo do formulário mostrando, em tempo real, conforme você mexe nos sliders:
-
-```
-Estimativa
-≈ 2h 15min de envio efetivo
-~ 8 mensagens por minuto · 4 chips ativos · 480 destinatários
-```
-
-Recalcula automaticamente quando você muda: nº de canais selecionados, delay, delay aleatório, `max_per_minute`, `max_per_hora`. **Sem considerar janela horária nem pausas** — é tempo corrido de envio puro, como você pediu.
-
-### 2. Delay global entre lotes (novo campo opcional)
-
-Hoje cada chip tem seu próprio relógio: começa, dispara, espera seus 30s, dispara de novo. Eles dessincronizam rapidamente. O novo campo permite forçar o ritmo "rajada paralela":
-
-```
-[ ] Sincronizar lotes paralelos
-    Dispara N mensagens ao mesmo tempo (uma por chip), espera, repete.
-    
-    Tamanho do lote: [4] (= nº de canais selecionados, sugerido)
-    Pausa entre lotes: [60] segundos
-```
-
-Quando **desligado** (padrão): comportamento atual — cada chip respeita seu próprio `delay_seconds`, throughput máximo.
-
-Quando **ligado**: o cron agrupa os envios em lotes do tamanho configurado e empurra o próximo lote inteiro para `agora + pausa_entre_lotes`. Mais lento e mais previsível.
-
-## Como vai funcionar por trás
-
-### Estimativa (frontend, puro cálculo)
-
-Em `src/components/campaign/send-settings-form.tsx`, recebe `totalRecipients` via prop e renderiza um novo card no topo. Fórmula:
+### Defeito 1 — `finishChecked` curto-circuita cedo demais
 
 ```ts
-const n = selected_channel_ids.length || 1;
-const delayMed = random_delay_min && random_delay_max
-  ? (random_delay_min + random_delay_max) / 2
-  : delay_seconds;
-
-// taxa teórica por minuto, limitada por max_per_minute
-const taxaPorChip = 60 / Math.max(delayMed, 1);
-const taxaTotal = Math.min(taxaPorChip * n, max_per_minute);
-
-const minutos = totalRecipients / taxaTotal;
+async function maybeFinishCampaign(ctx, campaignId) {
+  if (ctx.finishChecked.has(campaignId)) return;
+  ctx.finishChecked.add(campaignId);   // marca ANTES de checar
+  ...
+}
 ```
 
-Formata "Xh Ymin" e mostra a taxa efetiva. O `totalRecipients` o wizard já calcula — basta passar pra prop.
+O cron faz claim atômico de até 25 itens de uma vez (`message_queue.status: pending → processing`). Quando os 3 envios de uma campanha pequena caem no mesmo lote:
 
-### Modo sincronizado (servidor)
+1. Item 1 envia com sucesso → chama `maybeFinishCampaign` → marca `finishChecked` → vê itens 2 e 3 ainda em `processing` → retorna sem finalizar.
+2. Itens 2 e 3 enviam com sucesso → `maybeFinishCampaign` retorna na primeira linha (já está em `finishChecked`).
+3. Cron termina sem nunca marcar a campanha como `done`.
+4. Próximas execuções do cron não pegam nenhum item dessa campanha (fila vazia), então `maybeFinishCampaign` **nunca mais é chamada**.
 
-**Schema** (`campaign_send_settings`): 2 colunas novas
-- `batch_mode boolean default false`
-- `batch_pause_seconds integer` (nullable)
+Resultado observado no banco agora: campanha "Teste" tem 3/3 recipients com `status='sent'`, fila vazia, mas `campaigns.status='running'`.
 
-**Form** (`send-settings-form.tsx`): switch + input numérico, validação básica (pausa ≥ 0).
+### Defeito 2 — checagem inclui `processing`
 
-**Cron** (`src/lib/send/sender.server.ts`):
-- Após `result.ok`, se `settings.batch_mode` está ligado: em vez de chamar `pushNextScheduledFor` por chip, chamar nova função `pushBatchScheduledFor(ctx, campaignId, channelIds, batch_pause_seconds)` que empurra **todos os próximos `pending` da campanha** (um por canal) para `agora + batch_pause_seconds`.
-- Quando desligado: mantém o `pushNextScheduledFor` atual (zero mudança de comportamento).
+Mesmo sem o defeito 1, a query inclui status `processing`, que captura os próprios itens do lote em execução. O último item processado entra na função quando ele próprio já está marcado `sent`, mas se houver outro `processing` em paralelo (no mesmo lote), também falha.
 
-Isso garante o ritmo "4 juntos → pausa → 4 juntos" que você descreveu, sem quebrar o fluxo individual por chip quando o modo está desligado.
+## Correção
 
-## Arquivos afetados
+Em `src/lib/send/sender.server.ts`:
 
-| Arquivo | Mudança |
-|---|---|
-| migration nova | + colunas `batch_mode`, `batch_pause_seconds` em `campaign_send_settings` |
-| `src/components/campaign/send-settings-form.tsx` | + card de estimativa, + seção "Lotes sincronizados", + 2 campos no state |
-| `src/routes/_authenticated/campaigns.$campaignId.settings.tsx` e wizard de criação | passar `totalRecipients` pra prop nova |
-| `src/lib/campaigns.functions.ts` | persistir/ler os 2 campos novos |
-| `src/lib/send/sender.server.ts` | nova `pushBatchScheduledFor` + branch no `if (result.ok)` |
+1. **Remover o cache `finishChecked`** do `SenderContext` e de `createSenderContext` (não é mais necessário).
+2. **Reescrever `maybeFinishCampaign`** para:
+   - Não usar Set de short-circuit.
+   - Contar `campaign_recipients` com `status='queued'` (deve ser 0).
+   - Contar `message_queue` ainda `pending` **dessa campanha** via join filtrado, em vez de puxar 500 itens globais e filtrar em memória. Excluir `processing` da checagem — confiamos que cada item processado vai re-disparar a checagem e o último vai ver fila zerada.
+   - Se ambos zero, `UPDATE campaigns SET status='done'` (mantendo o filtro `.in("status", ["running","scheduled","paused"])` para idempotência).
 
-## Validação após implementar
+```ts
+async function maybeFinishCampaign(_ctx, campaignId) {
+  const { count: queued } = await supabaseAdmin
+    .from("campaign_recipients")
+    .select("id", { count: "exact", head: true })
+    .eq("campaign_id", campaignId)
+    .eq("status", "queued");
+  if ((queued ?? 0) > 0) return;
 
-1. Abrir uma campanha existente → ver o card de estimativa atualizando ao vivo
-2. Ligar "Sincronizar lotes", definir pausa 30s, salvar
-3. Disparar com 3+ chips → ver no `message_queue.scheduled_for` os próximos 3 itens com timestamp idêntico (lote sincronizado)
-4. Desligar o modo → comportamento volta ao atual
+  // pending da campanha (via recipient_id IN (...))
+  const { data: recs } = await supabaseAdmin
+    .from("campaign_recipients")
+    .select("id").eq("campaign_id", campaignId);
+  const ids = (recs ?? []).map(r => r.id);
+  if (ids.length) {
+    const { count: pending } = await supabaseAdmin
+      .from("message_queue")
+      .select("id", { count: "exact", head: true })
+      .in("campaign_recipient_id", ids)
+      .in("status", ["pending", "processing"]);
+    if ((pending ?? 0) > 0) return;
+  }
 
-## Minha opinião sobre o trade-off
+  await supabaseAdmin
+    .from("campaigns")
+    .update({ status: "done" })
+    .eq("id", campaignId)
+    .in("status", ["running", "scheduled", "paused"]);
+}
+```
 
-O modo sincronizado é mais lento que o atual (4 chips × 30s vira ~8 msgs/min vs ~40 msgs/min hoje), mas é mais "natural" — parece tráfego humano coordenado em vez de 4 robôs com relógios diferentes. Pra volumes pequenos/médios e pra evitar bloqueio em chips novos, vale a pena. Pra blasts grandes, deixe desligado.
+3. **Backfill manual** das campanhas já travadas: rodar `UPDATE` marcando como `done` qualquer campanha em `running/scheduled/paused` sem recipients `queued` e sem itens `pending`/`processing` na fila (cobre a "Teste" atual).
 
-A estimativa de duração é ganho puro sem custo.
+## Validação
+
+1. Rodar o backfill → a campanha "Teste" passa a aparecer como "Concluída".
+2. Criar uma campanha nova pequena (2-3 destinatários) → após o último envio o status muda automaticamente para `done` na próxima passada do cron (ou na mesma, dependendo do timing).
+3. Campanhas grandes continuam funcionando normalmente (checagem extra é barata: dois counts indexados).
