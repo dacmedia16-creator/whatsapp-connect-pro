@@ -1,78 +1,19 @@
-# Bug: campanhas não viram "Concluída" quando terminam
+## Problema
 
-## Causa raiz
+Na criação de campanha, ao desmarcar contatos na Etapa 1 (ex.: 98 de 178), o "Resumo final" da Etapa 2 mostra **178** em vez de **98**, dando a impressão de que a seleção manual foi ignorada.
 
-Em `src/lib/send/sender.server.ts`, a função `maybeFinishCampaign` tem **dois defeitos** que se combinam e impedem a transição `running → done`:
+## Causa
 
-### Defeito 1 — `finishChecked` curto-circuita cedo demais
+Em `src/routes/_authenticated/campaigns.index.tsx`, linha 877, o resumo exibe `summary.eligible`, que vem do resolver de contatos (contagem bruta de elegíveis na lista, **sem** considerar as exclusões manuais do usuário em `excludedKeys`).
 
-```ts
-async function maybeFinishCampaign(ctx, campaignId) {
-  if (ctx.finishChecked.has(campaignId)) return;
-  ctx.finishChecked.add(campaignId);   // marca ANTES de checar
-  ...
-}
-```
-
-O cron faz claim atômico de até 25 itens de uma vez (`message_queue.status: pending → processing`). Quando os 3 envios de uma campanha pequena caem no mesmo lote:
-
-1. Item 1 envia com sucesso → chama `maybeFinishCampaign` → marca `finishChecked` → vê itens 2 e 3 ainda em `processing` → retorna sem finalizar.
-2. Itens 2 e 3 enviam com sucesso → `maybeFinishCampaign` retorna na primeira linha (já está em `finishChecked`).
-3. Cron termina sem nunca marcar a campanha como `done`.
-4. Próximas execuções do cron não pegam nenhum item dessa campanha (fila vazia), então `maybeFinishCampaign` **nunca mais é chamada**.
-
-Resultado observado no banco agora: campanha "Teste" tem 3/3 recipients com `status='sent'`, fila vazia, mas `campaigns.status='running'`.
-
-### Defeito 2 — checagem inclui `processing`
-
-Mesmo sem o defeito 1, a query inclui status `processing`, que captura os próprios itens do lote em execução. O último item processado entra na função quando ele próprio já está marcado `sent`, mas se houver outro `processing` em paralelo (no mesmo lote), também falha.
+O envio real **já está correto** — `submit.mutate()` (linha 472–473) usa `eligibleRecipients`, que aplica `excludedKeys` e contém apenas os 98 selecionados. O problema é puramente visual.
 
 ## Correção
 
-Em `src/lib/send/sender.server.ts`:
+Em `src/routes/_authenticated/campaigns.index.tsx`:
 
-1. **Remover o cache `finishChecked`** do `SenderContext` e de `createSenderContext` (não é mais necessário).
-2. **Reescrever `maybeFinishCampaign`** para:
-   - Não usar Set de short-circuit.
-   - Contar `campaign_recipients` com `status='queued'` (deve ser 0).
-   - Contar `message_queue` ainda `pending` **dessa campanha** via join filtrado, em vez de puxar 500 itens globais e filtrar em memória. Excluir `processing` da checagem — confiamos que cada item processado vai re-disparar a checagem e o último vai ver fila zerada.
-   - Se ambos zero, `UPDATE campaigns SET status='done'` (mantendo o filtro `.in("status", ["running","scheduled","paused"])` para idempotência).
+1. Linha 877 — trocar `{summary.eligible}` por `{eligibleCount}` (variável já existente na linha 454, que respeita `excludedKeys`).
+2. Quando `eligibleCount !== summary.eligible`, anexar um sufixo discreto tipo `(de {summary.eligible} na lista)` para deixar claro que houve filtragem manual.
+3. Manter o bloco de "Bloqueados" como está — ele segue refletindo opt-out/sem consentimento/inválidos/duplicados detectados pelo resolver.
 
-```ts
-async function maybeFinishCampaign(_ctx, campaignId) {
-  const { count: queued } = await supabaseAdmin
-    .from("campaign_recipients")
-    .select("id", { count: "exact", head: true })
-    .eq("campaign_id", campaignId)
-    .eq("status", "queued");
-  if ((queued ?? 0) > 0) return;
-
-  // pending da campanha (via recipient_id IN (...))
-  const { data: recs } = await supabaseAdmin
-    .from("campaign_recipients")
-    .select("id").eq("campaign_id", campaignId);
-  const ids = (recs ?? []).map(r => r.id);
-  if (ids.length) {
-    const { count: pending } = await supabaseAdmin
-      .from("message_queue")
-      .select("id", { count: "exact", head: true })
-      .in("campaign_recipient_id", ids)
-      .in("status", ["pending", "processing"]);
-    if ((pending ?? 0) > 0) return;
-  }
-
-  await supabaseAdmin
-    .from("campaigns")
-    .update({ status: "done" })
-    .eq("id", campaignId)
-    .in("status", ["running", "scheduled", "paused"]);
-}
-```
-
-3. **Backfill manual** das campanhas já travadas: rodar `UPDATE` marcando como `done` qualquer campanha em `running/scheduled/paused` sem recipients `queued` e sem itens `pending`/`processing` na fila (cobre a "Teste" atual).
-
-## Validação
-
-1. Rodar o backfill → a campanha "Teste" passa a aparecer como "Concluída".
-2. Criar uma campanha nova pequena (2-3 destinatários) → após o último envio o status muda automaticamente para `done` na próxima passada do cron (ou na mesma, dependendo do timing).
-3. Campanhas grandes continuam funcionando normalmente (checagem extra é barata: dois counts indexados).
+Nenhuma mudança no backend, no envio ou no resolver — apenas no rótulo do resumo.
