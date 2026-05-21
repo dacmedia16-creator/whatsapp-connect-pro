@@ -49,9 +49,14 @@ export async function pickChannel(
   if (mode === "manual_priority" && Array.isArray(settings?.channel_priority) && settings.channel_priority.length) {
     candidates.push(...settings.channel_priority.filter((id: string) => allowed.includes(id)));
   } else if (mode === "round_robin") {
-    const idx = (ctx.rrCursor.get(campaignId) ?? 0) % allowed.length;
+    // Cursor persistido por campanha: na primeira chamada do batch, lê do banco
+    // (settings.rotation_cursor); chamadas seguintes usam o cache em memória.
+    let cursor = ctx.rrCursor.get(campaignId);
+    if (cursor === undefined) {
+      cursor = Number(settings?.rotation_cursor ?? 0) || 0;
+    }
+    const idx = ((cursor % allowed.length) + allowed.length) % allowed.length;
     candidates.push(...allowed.slice(idx), ...allowed.slice(0, idx));
-    ctx.rrCursor.set(campaignId, idx + 1);
   } else {
     // least_used: ordena por sent_today crescente
     const withUsage = await Promise.all(
@@ -78,6 +83,21 @@ export async function pickChannel(
     if (minGapSec > 0) {
       const last = await lastSendAt(cid);
       if (last && Date.now() - last.getTime() < minGapSec * 1000) continue;
+    }
+    // Avança cursor apenas no modo round_robin e somente quando um chip
+    // é efetivamente retornado (evita pular posições em retries vazios).
+    if (mode === "round_robin") {
+      const pickedIdx = allowed.indexOf(cid);
+      const nextCursor = (pickedIdx + 1) % allowed.length;
+      ctx.rrCursor.set(campaignId, nextCursor);
+      // Persiste no banco para sobreviver entre execuções do cron.
+      await supabaseAdmin
+        .from("campaign_send_settings")
+        .update({ rotation_cursor: nextCursor })
+        .eq("campaign_id", campaignId);
+      // Mantém o settingsCache em sincronia para chamadas seguintes neste batch.
+      const cached = ctx.settingsCache.get(campaignId);
+      if (cached) cached.rotation_cursor = nextCursor;
     }
     return ch;
   }
