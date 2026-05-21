@@ -696,7 +696,17 @@ function QueueTable({ campaignId }: { campaignId: string }) {
               <TableRow key={r.id}>
                 <TableCell className="font-medium">{r.name}</TableCell>
                 <TableCell className="font-mono text-xs">{r.phone ? formatPhone(r.phone) : "—"}</TableCell>
-                <TableCell className="text-sm">{r.channel}</TableCell>
+                <TableCell className="text-sm">
+                  {r.chip_diverged ? (
+                    <span title={`Planejado: ${r.planned_channel} → Usado: ${r.actual_channel} (${r.selection_reason ?? ""})`}>
+                      <span className="line-through text-muted-foreground mr-1">{r.planned_channel}</span>
+                      <span className="text-warning font-medium">→ {r.actual_channel}</span>
+                    </span>
+                  ) : (
+                    <span title={r.selection_reason ?? ""}>{r.actual_channel ?? r.planned_channel ?? r.channel}</span>
+                  )}
+                  {r.fallback_used && <Badge variant="outline" className="ml-2 text-[10px] border-warning text-warning">fallback</Badge>}
+                </TableCell>
                 <TableCell><QueueStatusBadge status={r.status} /></TableCell>
                 <TableCell className="text-center text-xs">{r.attempts}</TableCell>
                 <TableCell className="text-xs text-muted-foreground">{r.last_attempt_at ? format(new Date(r.last_attempt_at), "dd/MM HH:mm") : "—"}</TableCell>
