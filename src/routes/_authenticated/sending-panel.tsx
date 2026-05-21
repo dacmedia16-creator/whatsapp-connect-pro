@@ -32,7 +32,7 @@ import {
   getSendSettingsFn, upsertSendSettingsFn, getSendPanelOverviewFn,
   getChannelsHealthFn, pauseChannelFn, setCampaignStatusFn,
   requeueFailedFn, requeueRecipientFn, markIgnoredFn,
-  getQueueRowsFn, getLiveActivityFn,
+  getQueueRowsFn, getLiveActivityFn, simulateCampaignFn,
 } from "@/lib/send-panel.functions";
 import { enqueueCampaignFn, processQueueFn, testChannelFn } from "@/lib/ziontalk.functions";
 import { formatPhone } from "@/lib/phone";
