@@ -32,7 +32,7 @@ import {
   getSendSettingsFn, upsertSendSettingsFn, getSendPanelOverviewFn,
   getChannelsHealthFn, pauseChannelFn, setCampaignStatusFn,
   requeueFailedFn, requeueRecipientFn, markIgnoredFn,
-  getQueueRowsFn, getLiveActivityFn,
+  getQueueRowsFn, getLiveActivityFn, simulateCampaignFn,
 } from "@/lib/send-panel.functions";
 import { enqueueCampaignFn, processQueueFn, testChannelFn } from "@/lib/ziontalk.functions";
 import { formatPhone } from "@/lib/phone";
@@ -531,6 +531,7 @@ function ControlsBar({ campaignId, campaignStatus }: { campaignId: string; campa
   const processBatch = useServerFn(processQueueFn);
   const setStatus = useServerFn(setCampaignStatusFn);
   const requeue = useServerFn(requeueFailedFn);
+  const simulate = useServerFn(simulateCampaignFn);
   const { data: settings } = useSettings(campaignId);
 
   const refresh = () => {
@@ -557,6 +558,15 @@ function ControlsBar({ campaignId, campaignStatus }: { campaignId: string; campa
   const requeueMut = useMutation({
     mutationFn: async () => requeue({ data: { campaignId } }),
     onSuccess: (r) => { toast.success(`${r.requeued} mensagem(ns) reprocessada(s)`); refresh(); },
+    onError: (e: Error) => toast.error(e.message),
+  });
+  const simulateMut = useMutation({
+    mutationFn: async () => simulate({ data: { campaignId } }),
+    onSuccess: (r: any) => {
+      if (!r.ok) { toast.error(r.reason ?? "Falha na simulação"); return; }
+      const s = r.summary;
+      toast.success(`Simulação: ${s.would_send} enviariam · ${s.blocked_no_consent} sem consent · ${s.blocked_opt_out} opt-out · ${s.blocked_no_channel} sem canal`);
+    },
     onError: (e: Error) => toast.error(e.message),
   });
 
@@ -618,6 +628,9 @@ function ControlsBar({ campaignId, campaignStatus }: { campaignId: string; campa
           )}
           <Button size="lg" variant="outline" onClick={() => requeueMut.mutate()}>
             <RefreshCw className="h-4 w-4 mr-1" /> Reprocessar falhas
+          </Button>
+          <Button size="lg" variant="outline" onClick={() => simulateMut.mutate()} disabled={simulateMut.isPending}>
+            <TestTube className="h-4 w-4 mr-1" /> Simular (dry-run)
           </Button>
         </div>
         {channelCount === 0 && (
@@ -696,7 +709,17 @@ function QueueTable({ campaignId }: { campaignId: string }) {
               <TableRow key={r.id}>
                 <TableCell className="font-medium">{r.name}</TableCell>
                 <TableCell className="font-mono text-xs">{r.phone ? formatPhone(r.phone) : "—"}</TableCell>
-                <TableCell className="text-sm">{r.channel}</TableCell>
+                <TableCell className="text-sm">
+                  {r.chip_diverged ? (
+                    <span title={`Planejado: ${r.planned_channel} → Usado: ${r.actual_channel} (${r.selection_reason ?? ""})`}>
+                      <span className="line-through text-muted-foreground mr-1">{r.planned_channel}</span>
+                      <span className="text-warning font-medium">→ {r.actual_channel}</span>
+                    </span>
+                  ) : (
+                    <span title={r.selection_reason ?? ""}>{r.actual_channel ?? r.planned_channel ?? r.channel}</span>
+                  )}
+                  {r.fallback_used && <Badge variant="outline" className="ml-2 text-[10px] border-warning text-warning">fallback</Badge>}
+                </TableCell>
                 <TableCell><QueueStatusBadge status={r.status} /></TableCell>
                 <TableCell className="text-center text-xs">{r.attempts}</TableCell>
                 <TableCell className="text-xs text-muted-foreground">{r.last_attempt_at ? format(new Date(r.last_attempt_at), "dd/MM HH:mm") : "—"}</TableCell>

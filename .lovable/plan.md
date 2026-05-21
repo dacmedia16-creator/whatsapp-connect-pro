@@ -1,182 +1,154 @@
 
-# Diagnóstico — Auditoria de consistência e segurança operacional
+# Auditoria de consistência — sistema de envio WhatsApp
 
-> Esta etapa é apenas diagnóstico. Nada será alterado sem sua aprovação.
+Este é um **relatório de diagnóstico**. Nenhum arquivo será alterado até sua aprovação.
+
+---
 
 ## 1. Resumo executivo
 
-Os dados divergem porque a mesma configuração mora em **mais de um lugar** e cada tela escolhe um *fallback* diferente quando o registro principal não existe. O envio real é decidido pelo `sender.server.ts` num momento (run-time), mas o que aparece na UI é o snapshot gravado pelo `enqueueCampaignCore` em outro momento (enqueue-time). Entre os dois, o `pickChannel` pode trocar o chip — e nem sempre essa troca é refletida na fila visível.
+A fonte única de verdade (`send-settings-defaults.ts` + tabela `campaign_send_settings`) **já existe e está corretamente plumbada** no formulário, no painel de envios, no `getSendSettingsFn`, no `enqueueCampaignCore` e no `sender.server.ts`. Porém, sobraram **5 divergências reais** que fazem tela, fila e execução não baterem:
 
-Há também **mistura de escopo**: `channels.sent_today` é global do chip (soma todas as campanhas + envios manuais + testes), mas o painel mostra esse número em telas que o operador interpreta como "desta campanha".
+1. **Default de `rotation_mode` inconsistente** entre o formulário (mostra "Menos usado") e o painel de envios (cai em `round_robin` quando `settings` ainda não chegou).
+2. **`campaign.channel_ids` e `campaign.rate_per_min` continuam sendo gravados em paralelo** a `campaign_send_settings`, criando dois "lados da verdade" que podem divergir.
+3. **`enqueueCampaignCore` tem uma cópia própria** da lógica de rotação (`pickInitialChannel`) que diverge do `pickChannel` real do sender — o canal mostrado na fila não é necessariamente o canal que vai disparar.
+4. **`ziontalk.functions.ts` mantém um `nextDateInTz` legado com `hour + 3` hardcoded** (BRT fixo) — função morta mas pronta para reintroduzir bug.
+5. **Não existe snapshot da configuração no momento do enqueue**: alterar settings depois muda silenciosamente o que estava na fila, e o painel não consegue explicar por que um envio escolheu certo chip.
 
----
-
-## 2. Riscos críticos (podem causar bloqueio/perda de chip)
-
-| # | Risco | Causa raiz |
-|---|---|---|
-| C1 | **Modo de rotação exibido ≠ modo salvo ≠ modo executado** | 4 *defaults* diferentes para `rotation_mode` espalhados pelo código: `send-panel.functions.ts` → `round_robin`, `send-settings-form.tsx` → `least_used`, `createCampaignFn` fallback → `least_used`, `enqueueCampaignCore` fallback → `round_robin`, `sending-panel.tsx` setMode → `round_robin`. Quando `campaign_send_settings` não existe, cada tela "inventa" um padrão. |
-| C2 | **Chip exibido na fila ≠ chip realmente usado** | `createCampaignFn` grava `campaign_recipients.channel_id = primaryChannelId` (o primeiro da lista) para todos. `enqueueCampaignCore` distribui via `pickInitialChannel` e grava `message_queue.channel_id`. O `sender.server.ts` chama `pickChannel` em run-time e pode trocar o canal (faz `update({ channel_id })`). UI lê snapshot, então mostra um chip que pode não ser o real. |
-| C3 | **"Pausar campanha" se comporta como cancelar** | `setCampaignStatusFn` ao receber `paused` faz `message_queue.update({ status: "failed", last_error })` e `campaign_recipients.update({ status: "failed" })`. Não existe retomada — quem pausa perde os pendentes silenciosamente. |
-| C4 | **Limites por campanha vazam para outras campanhas** | `channels.sent_today` é incrementado por TODOS os envios (sender de qualquer campanha + `sendMessageFn` da inbox + `testChannelFn`). O `max_per_day_per_channel` da campanha A consome quota da campanha B. Não há contador por (canal, campanha). |
-| C5 | **Duplicidade `campaigns.channel_ids` vs `campaign_send_settings.selected_channel_ids`** | `createCampaignFn` grava nos dois. `upsertSendSettingsFn` (chamado pelo painel de envios e pela tela de configurações) só atualiza `campaign_send_settings`. `enqueueCampaignCore` prioriza `selected_channel_ids` e cai para `channel_ids` — divergência entre os dois leva a chips fantasmas ou faltantes. |
-| C6 | **Duplicidade `campaigns.rate_per_min` vs `campaign_send_settings.max_per_minute`** | Tela de criar campanha exibe um; configurações de envio mostra outro. Sender usa `max_per_minute`. `enqueueCampaignCore` usa `delay_seconds` do settings mas o offset inicial não considera `batch_mode` — quando o batch está ligado, o agendamento inicial não respeita o lote. |
-| C7 | **`requeueRecipientFn` reenfileira sem revalidar consent/opt-out** | Se o contato deu opt-out entre o enqueue original e o requeue, ele volta para a fila. Só o sender bloqueia (em `processQueueItem`), mas a contagem visível de "pendentes" cresce e há risco de janela de erro. |
-| C8 | **Janela de horário com offset BRT hardcoded** | `rate-limit.server.ts` → `nextDateInTz` faz `setUTCHours(hour + 3)`. Ignora `tz` real. Para campanha em `America/Manaus` (UTC-4) reagenda na hora errada. |
+Causa raiz: **duplicidade de configuração + lógica de seleção de canal escrita em dois lugares**. Não é bug visual, é arquitetura.
 
 ---
 
-## 3. Riscos médios
-
-| # | Risco | Causa raiz |
-|---|---|---|
-| M1 | **`audience_filter.autoPauseOnErrors` é configuração órfã** | Salva em `campaigns.audience_filter` por `createCampaignFn`. Nenhum lugar lê. Operador acha que tem proteção que não existe. |
-| M2 | **`getChannelsHealthFn` é global mas exibido no contexto de uma campanha** | Mostra `sent_today_effective` do chip (todas as campanhas), não do contexto atual. Confunde "saúde" com "consumo desta campanha". |
-| M3 | **Painel de envios mostra `total` = `campaign_recipients` da campanha, mas o card "Total na fila" sugere `message_queue`** | Label sugere fila; valor vem de recipients. Inconsistência semântica com "Pendentes" (também recipients). |
-| M4 | **Form de configurações pode salvar `rotation_cursor`** | `getSendSettingsFn` faz `select("*")` e devolve `rotation_cursor`. Form inicializa baseline com esse campo. O schema do upsert filtra, então não persiste — mas é poluição que mascara diffs em "Alterações não salvas". |
-| M5 | **`requeueFailedFn` reseta `attempts` mas não revalida settings/canal** | Pode reenviar com chip pausado/sem chave se settings mudaram. Sender filtra, mas a fila fica em loop pending→failed. |
-| M6 | **`enqueueCampaignCore` agendamento inicial ignora `batch_mode`** | Empurra `scheduled_for = startAt + idx*delay`. Quando batch_mode liga, o sender empurra batch depois — mas o item da posição N já tem horário cravado. Pode disparar fora de fase. |
-| M7 | **Realtime escuta `*` de `message_queue` global** | `sending-panel.tsx` se reinvalida com qualquer mudança da fila (qualquer campanha). Reabre queries de outras campanhas. Custo, não correção. |
-
----
-
-## 4. Tabela por opção (escopo, persistência, leitura, divergência)
-
-| Opção | Tela onde é configurada | Campo/tabela | Tela onde é exibida | Onde é usada | Inconsistência | Risco | Correção sugerida |
-|---|---|---|---|---|---|---|---|
-| Canais selecionados | criar campanha + painel de envios + `campaigns.$id.settings` | `campaigns.channel_ids` **+** `campaign_send_settings.selected_channel_ids` | painel de envios (lê settings) | `enqueueCampaignCore`, `sender.server.ts` | Duplicidade. Edição posterior só atualiza um lado. | Crítico | Eliminar `campaigns.channel_ids` ou marcá-lo como snapshot read-only. Fonte única = `campaign_send_settings`. |
-| Modo de rotação | criar campanha + painel de envios + settings | `campaign_send_settings.rotation_mode` | painel de envios + settings | `sender.server.ts → pickChannel` | 4 *defaults* diferentes no código. | Crítico | Constante única (`SEND_SETTINGS_DEFAULTS`) importada por servidor e cliente. `getSendSettingsFn` retorna sempre o registro persistido — se não existir, cria com os defaults canônicos. |
-| Prioridade manual | painel + settings | `campaign_send_settings.channel_priority` | painel + settings | `pickChannel` | OK na origem; "perde" entradas quando `selected_channel_ids` muda fora de sincronia. | Médio | Validar no upsert: `channel_priority ⊆ selected_channel_ids`. |
-| Delay por chip | settings | `campaign_send_settings.delay_seconds` + `random_delay_min/max` | settings + estimativa | `pickChannel` (gap) + `enqueueCampaignCore` (offset inicial) | OK isoladamente; conflita com `batch_mode`. | Médio | No enqueue, quando `batch_mode=true`, ignorar offset incremental e enfileirar todos com `scheduled_for=now`. |
-| Lotes sincronizados | settings | `campaign_send_settings.batch_mode` + `batch_pause_seconds` | settings | `sender.server.ts → pushBatchScheduledFor` | Enqueue inicial não considera. | Médio | Acima. |
-| Limite por minuto/hora | settings | `campaign_send_settings.max_per_minute/hour` | settings + overview | `pickChannel` via `recentSends` | `recentSends` consulta `send_logs` global do chip, não da campanha. | Crítico | Filtrar `recentSends` por `(channel_id, campaign_id)` quando o limite for por campanha; manter global apenas como teto do chip. |
-| Limite diário por canal | settings | `campaign_send_settings.max_per_day_per_channel` | settings | `sender` faz `min(maxDay, channel.daily_limit)` | `channel.sent_today` é global → uma campanha consome cota da outra. | Crítico | Criar tabela `channel_daily_usage(channel_id, date, campaign_id, sent)` ou contar `send_logs` 2xx por `(channel_id, campaign_id, dia)`. |
-| Janela horária | settings | `campaign_send_settings.allowed_start/end/weekdays/timezone` | settings | `isWithinCampaignWindow` | `nextWindow` usa BRT hardcoded. | Crítico | Calcular `nextWindow` com `Intl.DateTimeFormat` no `tz` real (ou luxon). |
-| Auto-pause fora do horário | settings | `auto_pause_outside_hours` | settings | **Não é lido em lugar nenhum** | Sender reagenda mas nunca pausa a campanha. | Médio | Implementar leitura no sender ou remover o toggle. |
-| Auto-pause se todos canais caem | settings | `auto_pause_on_all_channels_down` | settings | `sender.server.ts` (lê) | OK. | — | — |
-| Status da campanha (pause/cancel) | painel | `campaigns.status` + `setCampaignStatusFn` | painel + lista | `sender` (defesa em profundidade) | Pause faz `failed` em fila. Retomar não reenfileira. | Crítico | Diferenciar pause (reagenda fila para +5min) de cancel (marca failed). Já existe a lógica de reagendar no sender — basta NÃO marcar failed em pause. |
-| Opt-out / consent | inbox + import | `contacts.consent`, `contacts.opt_out_at` | painel de envios (recipients) | `previewRecipientsFn`, `createCampaignFn`, `processQueueItem` | `requeueRecipientFn` reenfileira sem checar. | Médio | Revalidar consent/opt-out em todos os caminhos de requeue. |
-| Mensagem template | criar campanha | `campaigns.message_template` | painel de envios | `enqueueCampaignCore` (renderiza) | Sem snapshot em `message_queue.rendered_text`? Existe (`rendered_text`) — OK. | — | — |
-| Limite global `rate_per_min` | criar campanha | `campaigns.rate_per_min` | nenhuma | `enqueueCampaignCore` (fallback de `delay_seconds`) | Duplica `max_per_minute`. | Médio | Remover de `campaigns`. |
-| Auto-pause em erros | criar campanha | `campaigns.audience_filter.autoPauseOnErrors` | nenhuma | **Ninguém** | Configuração órfã. | Médio | Implementar ou remover. |
-| Mídia | criar campanha | `campaigns.media_*` | painel + sender | `processQueueItem` | OK. | — | — |
-
----
-
-## 5. Fluxo de seleção de chip (onde quebra)
+## 2. Fluxo ponta a ponta (mapa real)
 
 ```text
-[Criar campanha]
-  └── grava: campaigns.channel_ids = [c1,c2,c3]
-            campaign_send_settings.selected_channel_ids = [c1,c2,c3]
-            campaign_send_settings.rotation_mode = least_used (default UI)
-            campaign_recipients.channel_id = c1 (todos!)  ← snapshot enganoso
-
-[Enqueue (createCampaignFn → enqueueCampaignCore)]
-  └── lê: settings.rotation_mode ?? "round_robin"  ← FALLBACK DIFERENTE
-            settings.selected_channel_ids OR campaigns.channel_ids
-            distribui via pickInitialChannel
-            grava: message_queue.channel_id = cN  ← outro snapshot
-
-[Sender (processQueueItem)]
-  └── lê: settings via getSettings  ← terceiro lugar, sem fallback se NULL
-            roda pickChannel → pode trocar canal
-            grava: message_queue.channel_id = cM  (update)
-                    campaign_recipients.channel_id = cM (só em sucesso)
-
-[UI: painel de envios "Canais"]
-  └── lê: campaign_send_settings (form local) + getChannelsHealthFn (global)
-       └─ "Enviados hoje" do chip = TODAS as campanhas, não desta
+[SendSettingsForm] ──salva──> upsertSendSettingsFn ──> campaign_send_settings
+[CreateCampaignFn]    ──salva──> campaigns.channel_ids + campaigns.rate_per_min  ⚠ duplica
+                      ──salva──> campaign_send_settings                          ✓ fonte única
+                      ──cria──> campaign_recipients (channel_id = primaryChannelId)  ⚠ snapshot estático
+                      ──chama──> enqueueCampaignCore
+                                   └─ lê campaign_send_settings ✓
+                                   └─ pickInitialChannel(idx)  ⚠ lógica própria, diverge de pickChannel
+                                   └─ insere message_queue (channel_id pré-decidido)
+[cron /api/public/hooks/process-queue]
+   └─ claim 25 pending
+   └─ processQueueItem
+        └─ pickChannel(settings)  ⚠ pode escolher OUTRO channel_id diferente do que está em message_queue
+        └─ se diferente: UPDATE message_queue.channel_id  (não há log de "motivo")
+        └─ envia, grava send_logs, atualiza campaign_recipients.channel_id
+[SendingPanel]
+   └─ getQueueRowsFn mostra channel_id do recipient (último usado)
+   └─ getSendPanelOverviewFn conta por campaign_recipients ✓
 ```
 
-Três cópias da decisão. Cada uma com defaults diferentes. Nenhuma é tratada como verdade absoluta.
+**Divergências detectadas:**
+
+| Etapa | Arquivo | Campo esperado | Campo real | Problema |
+|---|---|---|---|---|
+| Form → banco | `send-settings-form.tsx` | `rotation_mode='least_used'` (default exibido) | `SEND_SETTINGS_DEFAULTS.rotation_mode='least_used'` ✓ | OK |
+| Banco default em `campaign_send_settings` | migration | `'round_robin'` | `'round_robin'` | ⚠ Diverge do default de código |
+| Criação campanha | `campaigns.functions.ts:342` | só `campaign_send_settings` | grava também `channel_ids` e `rate_per_min` em `campaigns` | ⚠ Duplicidade |
+| Enqueue | `ziontalk.functions.ts:357` | usa `pickChannel` central | usa `pickInitialChannel` local | ⚠ Lógica duplicada |
+| message_queue | — | refletir snapshot | só tem `channel_id`, sem `planned_*`/`reason` | ⚠ Sem rastreabilidade |
+| Sender troca chip | `sender.server.ts:175` | log de "motivo" | só `UPDATE channel_id` silencioso | ⚠ Tela mostra um chip, executa outro |
+| Painel | `send-panel.functions.ts:349` | `planned` vs `actual` | mostra só último | ⚠ Esconde divergência |
 
 ---
 
-## 6. Logs e rastreabilidade (lacunas)
+## 3. Alternância de chips — auditoria específica
 
-`send_logs` registra: `channel_id, contact_id, campaign_id, http_status, response_text, created_at`.
-
-Não registra:
-- chip que **deveria** ter sido escolhido (intent) vs chip realmente usado;
-- motivo da escolha (cursor RR, least_used score, prioridade);
-- snapshot da config no momento do envio;
-- usuário que iniciou/pausou/alterou a campanha (existe `campaign_events`? a auditoria menciona trigger `fn_log_campaign_event` mas não há leitura na UI);
-- se houve fallback de default.
-
----
-
-## 7. RLS e permissões (a verificar na fase 2)
-
-Por inspeção do código:
-- Server functions usam `supabaseAdmin` (bypass RLS) e validam role via `user_roles` (`admin`/`gestor`). OK.
-- UI lê `campaigns`, `channels`, `messages` diretamente via `supabase` (browser client) — RLS é a única proteção. Preciso rodar `supabase--linter` e listar policies por tabela na próxima rodada.
-- `sendMessageFn` permite atendente enviar apenas em conversa atribuída a ele. OK.
-- `testChannelFn` exige admin. OK.
-- `requeueFailedFn`, `markIgnoredFn`, `pauseChannelFn` exigem gestor. OK.
-
-Pendências para a fase 2 do diagnóstico:
-- Confirmar RLS de `campaigns`, `campaign_recipients`, `message_queue`, `send_logs`, `channels`, `contacts`, `conversations`, `messages`, `user_roles` (cada operação tem policy?).
-- Verificar se o front consegue UPDATE direto em campos sensíveis (`channels.daily_limit`, `campaigns.status`, `contacts.consent`).
-- Confirmar que `auth.users` não é referenciado por FK direta.
+- **Onde é selecionada:** `SendSettingsForm` (campos `rotation_mode`, `selected_channel_ids`, `channel_priority`) **e** também na aba "Canais" do painel de envios. Os dois caem no mesmo `upsertSendSettingsFn`. ✓
+- **Onde é salva:** `campaign_send_settings`. ✓
+- **Quem usa em runtime:**
+  - `enqueueCampaignCore.pickInitialChannel` (decide o `channel_id` inicial no momento do enfileiramento) — **lógica própria, simplificada**:
+    - `manual_priority` → sempre o primeiro
+    - `least_used` → conta local em memória
+    - `round_robin` → `idx % channelList.length`
+  - `sender.server.ts → pickChannel` (decide na hora do disparo) — **lógica completa**: respeita limites/min, /hora, /dia, status, pacing, cursor RR persistido em `rotation_cursor`.
+- **Conflito:** o canal que o painel mostra (`message_queue.channel_id`) é o do `pickInitialChannel`. O canal que **efetivamente envia** pode ser outro escolhido por `pickChannel`. Não há "motivo" registrado. O usuário vê chip A na fila e chip B nos logs.
+- **`campaign.channel_ids`:** ainda é usado como fallback em `enqueueCampaignCore:357`. Se settings ficar vazio por qualquer razão (migração, edição manual), o sistema cai no campo legado sem avisar.
 
 ---
 
-## 8. Modo dry-run (proposta — não implementado hoje)
+## 4. Riscos
 
-Não existe. Proposta:
-- Adicionar `campaigns.dry_run boolean default false`.
-- Quando `true`, `enqueueCampaignCore` enfileira normalmente, mas `processQueueItem` substitui `zionSendMessage` por um stub que:
-  - resolve qual chip seria escolhido (`pickChannel`);
-  - grava em `send_logs` com `http_status = 0` e `response_text = "DRY_RUN: ..."`;
-  - marca `campaign_recipients.status = 'sent'` apenas para fins de visualização (ou novo status `'simulated'`).
-- Tela de painel mostra contraste "simulado vs real" e bloqueia executar real até o operador aprovar.
+**Críticos** (podem causar perda de chip ou envio fora da regra):
+- R1 — Sender escolhe chip diferente do planejado **sem log de motivo**. Se o gestor pausou um chip e o sistema fez fallback, ninguém vê.
+- R2 — Alterar `campaign_send_settings` depois do enqueue muda comportamento de itens já enfileirados **sem aviso**. Não há snapshot.
+- R3 — `campaign.channel_ids` legado pode "ressuscitar" canais que foram removidos de `selected_channel_ids`.
+- R4 — `getSendPanelOverviewFn` conta `processing` via `message_queue`, mas todos os outros via `campaign_recipients`. Em situações de race (sender atualizou recipient mas ainda não a queue, ou vice-versa) os totais podem não somar `total = sent + failed + pending + processing`.
 
----
-
-## 9. Plano de correção priorizado (a executar APÓS sua aprovação)
-
-**Fase A — fonte única (sem mexer no envio real):**
-1. Eliminar duplicidades: `campaigns.channel_ids` e `campaigns.rate_per_min` viram derived/read-only ou são removidos.
-2. Constante única `SEND_SETTINGS_DEFAULTS` importada por servidor e cliente. `getSendSettingsFn` cria registro com defaults se não existir e retorna sempre o persistido.
-3. `getSendSettingsFn` deixa de retornar `rotation_cursor` para o cliente.
-4. Validação no upsert: `channel_priority ⊆ selected_channel_ids`.
-
-**Fase B — corrigir comportamento de pause e logs:**
-5. `setCampaignStatusFn` em `pause` deixa de marcar `failed`. Reagenda `pending` para +5min (já é o que o sender faz se vir status `paused`).
-6. Implementar leitura de `auto_pause_outside_hours` no sender (ou remover o toggle).
-7. Corrigir `nextDateInTz` para usar `tz` real.
-8. Adicionar colunas em `send_logs`: `intended_channel_id`, `chosen_reason`, `settings_snapshot jsonb` (opcional).
-
-**Fase C — isolamento por campanha:**
-9. Contar `recentSends` e `dailyUsage` por `(channel_id, campaign_id)` quando o limite é da campanha. Manter global como teto do chip.
-10. `getChannelsHealthFn` ganha versão "por campanha" usada no painel quando há `campaignId`.
-
-**Fase D — robustez de requeue:**
-11. `requeueFailedFn` e `requeueRecipientFn` revalidam consent/opt-out/canal antes.
-12. No enqueue, quando `batch_mode=true`, todos os itens entram com `scheduled_for=now` e o sender controla o pacing.
-
-**Fase E — dry-run e auditoria UI:**
-13. Implementar dry-run conforme seção 8.
-14. Expor `campaign_events` numa aba "Histórico" do painel.
+**Médios:**
+- R5 — `ziontalk.functions.ts:21` mantém `nextDateInTz` legado com `hour+3` BRT fixo. Função não é chamada hoje, mas qualquer refactor pode reintroduzir.
+- R6 — `campaigns.rate_per_min` continua sendo lido para mostrar resumo de campanha; está dessincronizado de `campaign_send_settings.max_per_minute`.
+- R7 — Default de `rotation_mode` no schema do banco (`'round_robin'`) ≠ default de código (`'least_used'`). Linhas criadas direto via SQL ficam diferentes do que o usuário vê.
 
 ---
 
-## 10. Checklist de validação (a passar depois da correção)
+## 5. Plano de correção (ordem de prioridade)
 
-- [ ] Modo de rotação salvo aparece igual em criar / settings / painel de envios.
-- [ ] Chip exibido em `campaign_recipients` e `message_queue` é o realmente usado em `send_logs`.
-- [ ] Pause + retomar não perde mensagens.
-- [ ] Campanha A não consome quota da campanha B no mesmo chip.
-- [ ] Janela horária reagenda para o `tz` correto.
-- [ ] Requeue de contato com opt-out posterior é bloqueado.
-- [ ] Card "Saúde dos canais" tem rótulo claro de escopo (global vs campanha).
-- [ ] `audience_filter.autoPauseOnErrors` ou funciona ou some.
-- [ ] Logs respondem: qual chip deveria, qual foi, por quê.
-- [ ] Dry-run mostra divergências antes do envio real.
+> **Aguardando aprovação**. Cada fase é um commit isolado, reversível.
+
+### Fase 1 — Eliminar duplicidade de configuração (estrutural)
+- Migration: marcar `campaigns.channel_ids` e `campaigns.rate_per_min` como **somente leitura legada** (manter colunas por compat, parar de gravar).
+- Migration: alterar default `campaign_send_settings.rotation_mode` para `'least_used'` (alinhar com código).
+- `campaigns.functions.ts`: parar de gravar `channel_ids` e `rate_per_min` na criação; salvar tudo só em `campaign_send_settings`.
+- `enqueueCampaignCore`: remover fallback `?? campaignChannelIds`. Se settings está vazio, erro explícito.
+
+### Fase 2 — Centralizar seleção de canal (causa raiz)
+- Criar `src/lib/send/channel-selector.server.ts → pickChannelForEnqueue(...)`: versão "previsão" do `pickChannel`, sem efeitos colaterais (não atualiza cursor, não persiste). Mesma lógica, mesmas regras.
+- `enqueueCampaignCore`: trocar `pickInitialChannel` por `pickChannelForEnqueue`. O canal previsto na fila passa a ser o mesmo que o sender escolheria.
+- `pickChannel` (runtime) passa a **retornar `{ channel, reason }`** e o sender grava `reason` em `message_queue.last_error` (ou novo campo, ver Fase 3).
+
+### Fase 3 — Rastreabilidade (banco)
+- Migration aditiva em `message_queue`:
+  - `planned_channel_id uuid` — chip decidido no enqueue.
+  - `actual_channel_id uuid` — chip que efetivamente enviou.
+  - `channel_selection_reason text` — `'rotation:round_robin'`, `'fallback:least_used'`, `'limit_min'`, `'limit_day'`, `'paused'`, etc.
+  - `fallback_used boolean default false`.
+  - `settings_snapshot jsonb` — cópia dos campos relevantes de `campaign_send_settings` no momento do enqueue (rotation_mode, selected_channel_ids, priority, delays, limites, janela, timezone).
+- Backfill: `planned_channel_id = channel_id`, `actual_channel_id = channel_id` para registros existentes.
+
+### Fase 4 — Painel de envios honesto
+- `getQueueRowsFn`: retornar `planned_channel_label`, `actual_channel_label`, `selection_reason`, `fallback_used`.
+- Coluna nova "Chip planejado → chip usado" com badge vermelho quando diferentes.
+- Reconciliar `getSendPanelOverviewFn`: garantir `total = sent + failed + pending + processing + opted_out`. Hoje `processing` vem de tabela diferente.
+
+### Fase 5 — Limpeza de código morto
+- Remover `nextDateInTz` legado em `ziontalk.functions.ts` (linhas 21-26) e `getBusinessHoursWindow` que ninguém chama mais.
+- Remover leitura de `campaigns.rate_per_min` em telas de resumo; substituir por `campaign_send_settings.max_per_minute`.
+
+### Fase 6 — Dry-run
+- Novo server fn `simulateCampaignFn({ campaignId })` que **não envia nada**:
+  - Para cada recipient elegível: roda `pickChannelForEnqueue` + checa consent/opt-out/horário/limite.
+  - Retorna: `{ contact, status: 'would_send'|'blocked_no_consent'|'blocked_opt_out'|'blocked_outside_hours'|'blocked_no_channel', planned_channel, reason }`.
+- Botão "Simular" no painel, antes de "Iniciar".
 
 ---
 
-## 11. Próximo passo
+## 6. Checklist de testes antes de envio real
 
-Aguardo sua aprovação para iniciar pela **Fase A** (fonte única) — é a menos arriscada e elimina a maior parte das divergências visíveis. As fases B–E ficam para PRs separados, cada uma com QA dedicado, para que o envio real continue auditável a cada mudança.
+Após Fase 1–4, validar em ordem:
+
+1. Criar campanha nova → conferir que `campaigns.channel_ids` está vazio e tudo está em `campaign_send_settings`.
+2. Mudar `rotation_mode` no painel → recarregar form da campanha → mesmo valor.
+3. Enqueue → `message_queue.planned_channel_id` deve bater com a regra escolhida.
+4. Pausar 1 chip durante envio → conferir que `message_queue.actual_channel_id` muda, `fallback_used=true`, `selection_reason` preenchido.
+5. Pausar campanha → conferir que pending vai para `+5min`, nenhum vira `failed`.
+6. Alterar `max_per_day_per_channel` depois do enqueue → conferir que itens já enfileirados continuam usando o `settings_snapshot` do enqueue, não o novo valor.
+7. Dry-run de uma campanha grande → conferir distribuição esperada chip a chip.
+8. Soma de contadores: `overview.total == sent + failed + pending + processing` para qualquer campanha.
+
+---
+
+## 7. Arquivos que serão tocados (quando aprovado)
+
+- `supabase/migrations/<timestamp>_consistency_audit.sql` (novo) — colunas, defaults, backfill.
+- `src/lib/campaigns.functions.ts` — parar de gravar campos duplicados.
+- `src/lib/ziontalk.functions.ts` — remover `pickInitialChannel`, código morto, usar `pickChannelForEnqueue`; gravar `planned_channel_id` e `settings_snapshot`.
+- `src/lib/send/channel-selector.server.ts` — extrair `pickChannelForEnqueue` puro; `pickChannel` passa a retornar `reason`.
+- `src/lib/send/sender.server.ts` — gravar `actual_channel_id`, `selection_reason`, `fallback_used` em vez de só `channel_id`.
+- `src/lib/send-panel.functions.ts` — novo `simulateCampaignFn`; ajustes em `getQueueRowsFn` e `getSendPanelOverviewFn`.
+- `src/routes/_authenticated/sending-panel.tsx` — coluna planned vs actual, botão Simular.
+
+Nada será alterado até você dizer **"aprovado, aplica fase 1"** (ou as fases que escolher).

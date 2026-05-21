@@ -339,8 +339,12 @@ export const createCampaignFn = createServerFn({ method: "POST" })
             diff_from_client: contactIds.length - clientCount,
           },
         },
-        channel_ids: channelIds,
-        rate_per_min: data.ratePerMin,
+        // channel_ids e rate_per_min são LEGADOS — fonte única agora é
+        // campaign_send_settings. Mantemos as colunas no banco por compat
+        // mas não gravamos mais aqui. Os primeiros canais entram via
+        // settingsRow.selected_channel_ids abaixo.
+        channel_ids: [],
+        rate_per_min: 0,
         scheduled_at: data.scheduledAt,
         status,
         total_recipients: contactIds.length,

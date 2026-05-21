@@ -4,7 +4,8 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { zionSendMessage, logSend } from "./ziontalk.server";
 import { createSenderContext, processQueueItem } from "@/lib/send/sender.server";
-import { normalizeSendSettings } from "@/lib/send-settings-defaults";
+import { normalizeSendSettings, SEND_SETTINGS_DEFAULTS } from "@/lib/send-settings-defaults";
+import { pickChannelForEnqueue } from "@/lib/send/channel-selector.server";
 
 async function getChannelApiKey(channelId: string): Promise<string> {
   const secret = process.env.CHANNEL_KEY_SECRET;
@@ -18,41 +19,8 @@ async function getChannelApiKey(channelId: string): Promise<string> {
   return data as string;
 }
 
-function nextDateInTz(base: Date, addDays: number, hour: number, minute: number): Date {
-  const d = new Date(base);
-  d.setUTCDate(d.getUTCDate() + addDays);
-  d.setUTCHours(hour + 3, minute, 0, 0);
-  return d;
-}
-
-function getBusinessHoursWindow(bh: any): { ok: boolean; nextWindow: Date | null } {
-  if (!bh || typeof bh !== "object") return { ok: true, nextWindow: null };
-  const tz: string = bh.tz ?? "UTC";
-  const days: number[] = Array.isArray(bh.days) ? bh.days : [0, 1, 2, 3, 4, 5, 6];
-  const start: string = bh.start ?? "00:00";
-  const end: string = bh.end ?? "23:59";
-  const now = new Date();
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: tz, hour12: false, weekday: "short", hour: "2-digit", minute: "2-digit",
-  }).formatToParts(now);
-  const map: Record<string, string> = {};
-  parts.forEach((p) => { map[p.type] = p.value; });
-  const wdNames: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
-  const wd = wdNames[map.weekday] ?? 1;
-  const hhmm = `${map.hour}:${map.minute}`;
-  if (days.includes(wd) && hhmm >= start && hhmm <= end) return { ok: true, nextWindow: null };
-
-  for (let i = 0; i < 8; i++) {
-    const cand = new Date(now.getTime() + i * 24 * 60 * 60 * 1000);
-    const dayParts = new Intl.DateTimeFormat("en-US", { timeZone: tz, hour12: false, weekday: "short" }).formatToParts(cand);
-    const day = wdNames[dayParts.find((x) => x.type === "weekday")?.value ?? "Mon"] ?? 1;
-    if (!days.includes(day)) continue;
-    const [h, m] = start.split(":").map(Number);
-    if (i === 0 && hhmm < start) return { ok: false, nextWindow: nextDateInTz(now, 0, h, m) };
-    if (i > 0) return { ok: false, nextWindow: nextDateInTz(now, i, h, m) };
-  }
-  return { ok: false, nextWindow: new Date(Date.now() + 60 * 60 * 1000) };
-}
+// (helpers legados nextDateInTz/getBusinessHoursWindow removidos — usar
+// src/lib/send/rate-limit.server.ts, que respeita timezone real via Intl.)
 
 /** Send a message via a specific channel. Used by admin actions and inbox replies. */
 export const sendMessageFn = createServerFn({ method: "POST" })
@@ -350,14 +318,14 @@ export async function enqueueCampaignCore(campaignId: string): Promise<{ enqueue
     const settings = normalizeSendSettings(settingsRow ?? null);
 
     // Fonte única: campaign_send_settings.selected_channel_ids.
-    // campaign.channel_ids só é usado como SEED de migração quando settings
-    // ainda não tinha canais — não como fonte de verdade em runtime.
-    const settingsChannelIds = settings.selected_channel_ids ?? [];
-    const campaignChannelIds = (campaign.channel_ids as string[]) ?? [];
-    const channelIds = settingsChannelIds.length ? settingsChannelIds : campaignChannelIds;
+    // Sem fallback: se settings está vazio, erro explícito (não silencioso).
+    const channelIds = settings.selected_channel_ids ?? [];
+    if (!channelIds.length) {
+      throw new Error("Nenhum canal selecionado em campaign_send_settings — configure no painel antes de iniciar");
+    }
     let channelsQ = supabaseAdmin
       .from("channels")
-      .select("id, daily_limit, sent_today, sent_today_date")
+      .select("id, status, daily_limit, sent_today, sent_today_date")
       .neq("status", "paused");
     if (channelIds.length) channelsQ = channelsQ.in("id", channelIds);
     const { data: channels } = await channelsQ;
@@ -370,41 +338,58 @@ export async function enqueueCampaignCore(campaignId: string): Promise<{ enqueue
       .filter((r: any) => eligibleContactIds.has(r.contact_id))
       .map((r: any) => ({ id: r.id, contact_id: r.contact_id }));
 
-    // Distribuição inicial conforme settings (rotação + delays).
+    // Distribuição inicial conforme settings (rotação + delays) — usa a MESMA
+    // função que o sender (pickChannelForEnqueue), para que o canal planejado
+    // bata com o canal que vai realmente disparar.
     const startAt = campaign.scheduled_at ? new Date(campaign.scheduled_at).getTime() : Date.now();
     const contactMap = new Map(contacts.map((c) => [c.id, c]));
     const today = new Date().toISOString().slice(0, 10);
-    const rotationMode = settings.rotation_mode;
-    const priority = settings.channel_priority;
     const delaySeconds = Math.max(0, settings.delay_seconds);
     const jitterMin = settings.random_delay_min ?? 0;
     const jitterMax = settings.random_delay_max ?? 0;
     const batchMode = settings.batch_mode;
-    // contador local de uso por canal para least_used
-    const localUsage = new Map<string, number>(
-      channelList.map((c) => [c.id, c.sent_today_date === today ? (c.sent_today ?? 0) : 0]),
-    );
-    const orderedPriority = priority.filter((id) => channelList.some((c) => c.id === id));
 
-    function pickInitialChannel(idx: number): { id: string } {
-      if (rotationMode === "manual_priority" && orderedPriority.length) {
-        return { id: orderedPriority[0] };
-      }
-      if (rotationMode === "least_used") {
-        let best = channelList[0];
-        let bestUsed = localUsage.get(best.id) ?? 0;
-        for (const c of channelList) {
-          const u = localUsage.get(c.id) ?? 0;
-          if (u < bestUsed) { best = c; bestUsed = u; }
-        }
-        localUsage.set(best.id, bestUsed + 1);
-        return { id: best.id };
-      }
-      return { id: channelList[idx % channelList.length].id };
-    }
+    // Snapshot canônico das configurações no momento do enqueue.
+    // Itens já enfileirados não devem mudar de comportamento se settings mudar depois.
+    const settingsSnapshot = {
+      rotation_mode: settings.rotation_mode,
+      selected_channel_ids: settings.selected_channel_ids,
+      channel_priority: settings.channel_priority,
+      delay_seconds: settings.delay_seconds,
+      random_delay_min: settings.random_delay_min,
+      random_delay_max: settings.random_delay_max,
+      max_per_minute: settings.max_per_minute,
+      max_per_hour: settings.max_per_hour,
+      max_per_day_per_channel: settings.max_per_day_per_channel,
+      allowed_start_time: settings.allowed_start_time,
+      allowed_end_time: settings.allowed_end_time,
+      allowed_weekdays: settings.allowed_weekdays,
+      timezone: settings.timezone,
+      batch_mode: settings.batch_mode,
+      batch_pause_seconds: settings.batch_pause_seconds,
+      snapshotted_at: new Date().toISOString(),
+    };
+
+    // Estado mutável do round-robin / least_used durante o enqueue.
+    const enqueueCursor = { value: Number((settingsRow as any)?.rotation_cursor ?? 0) || 0 };
+    const localUsage = new Map<string, number>();
+    const channelsForPick = channelList.map((c: any) => ({
+      id: c.id, status: c.status, daily_limit: c.daily_limit,
+      sent_today: c.sent_today ?? 0, sent_today_date: c.sent_today_date,
+    }));
 
     const queueRows = (recs ?? []).map((r, idx) => {
-      const ch = pickInitialChannel(idx);
+      const picked = pickChannelForEnqueue({
+        settings: { ...SEND_SETTINGS_DEFAULTS, ...settings, rotation_cursor: enqueueCursor.value } as any,
+        channels: channelsForPick,
+        today,
+        cursor: enqueueCursor.value,
+        localUsage,
+      });
+      // Se nenhum canal disponível, registra com null para o sender decidir depois.
+      // Mantém um chip "default" para satisfazer a constraint NOT NULL de channel_id.
+      const chId = picked?.channel_id ?? channelList[idx % channelList.length].id;
+      if (picked) enqueueCursor.value = picked.next_cursor;
       const contact = contactMap.get(r.contact_id)!;
       const vars: Record<string, string> = {
         nome: contact.name,
@@ -424,11 +409,22 @@ export async function enqueueCampaignCore(campaignId: string): Promise<{ enqueue
       return {
         campaign_recipient_id: r.id,
         contact_id: r.contact_id,
-        channel_id: ch.id,
+        channel_id: chId,
+        planned_channel_id: chId,
+        channel_selection_reason: picked?.reason ?? "no_channel_available_at_enqueue",
+        fallback_used: picked?.fallback ?? false,
+        settings_snapshot: settingsSnapshot,
         rendered_text: rendered,
         scheduled_for: scheduledFor.toISOString(),
       };
     });
+    // Persiste cursor final no banco para o runtime começar do mesmo ponto.
+    if (enqueueCursor.value !== Number((settingsRow as any)?.rotation_cursor ?? 0)) {
+      await supabaseAdmin
+        .from("campaign_send_settings")
+        .update({ rotation_cursor: enqueueCursor.value })
+        .eq("campaign_id", campaign.id);
+    }
 
     const recipientIds = (recs ?? []).map((r) => r.id);
     const { data: existingQueue } = recipientIds.length
