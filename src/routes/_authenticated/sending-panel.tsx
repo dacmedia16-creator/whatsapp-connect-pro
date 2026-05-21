@@ -531,6 +531,7 @@ function ControlsBar({ campaignId, campaignStatus }: { campaignId: string; campa
   const processBatch = useServerFn(processQueueFn);
   const setStatus = useServerFn(setCampaignStatusFn);
   const requeue = useServerFn(requeueFailedFn);
+  const simulate = useServerFn(simulateCampaignFn);
   const { data: settings } = useSettings(campaignId);
 
   const refresh = () => {
@@ -557,6 +558,15 @@ function ControlsBar({ campaignId, campaignStatus }: { campaignId: string; campa
   const requeueMut = useMutation({
     mutationFn: async () => requeue({ data: { campaignId } }),
     onSuccess: (r) => { toast.success(`${r.requeued} mensagem(ns) reprocessada(s)`); refresh(); },
+    onError: (e: Error) => toast.error(e.message),
+  });
+  const simulateMut = useMutation({
+    mutationFn: async () => simulate({ data: { campaignId } }),
+    onSuccess: (r: any) => {
+      if (!r.ok) { toast.error(r.reason ?? "Falha na simulação"); return; }
+      const s = r.summary;
+      toast.success(`Simulação: ${s.would_send} enviariam · ${s.blocked_no_consent} sem consent · ${s.blocked_opt_out} opt-out · ${s.blocked_no_channel} sem canal`);
+    },
     onError: (e: Error) => toast.error(e.message),
   });
 
@@ -618,6 +628,9 @@ function ControlsBar({ campaignId, campaignStatus }: { campaignId: string; campa
           )}
           <Button size="lg" variant="outline" onClick={() => requeueMut.mutate()}>
             <RefreshCw className="h-4 w-4 mr-1" /> Reprocessar falhas
+          </Button>
+          <Button size="lg" variant="outline" onClick={() => simulateMut.mutate()} disabled={simulateMut.isPending}>
+            <TestTube className="h-4 w-4 mr-1" /> Simular (dry-run)
           </Button>
         </div>
         {channelCount === 0 && (
