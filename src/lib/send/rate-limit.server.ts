@@ -1,5 +1,44 @@
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 
+// Constrói uma data UTC que, projetada no `tz`, cai no dia `addDays` (a partir
+// de hoje no tz) com `hour:minute`. Usa busca binária para resolver o offset
+// do tz, evitando assumir BRT/UTC. Funciona para qualquer fuso suportado por Intl.
+function nextDateInTz(_base: Date, tz: string, addDays: number, hour: number, minute: number): Date {
+  // Pega a "data civil" atual no tz desejado.
+  const now = new Date();
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz, hour12: false, year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(now);
+  const map: Record<string, string> = {};
+  parts.forEach((p) => { map[p.type] = p.value; });
+  // Soma os dias no calendário civil do tz.
+  const baseY = Number(map.year);
+  const baseM = Number(map.month);
+  const baseD = Number(map.day);
+  // Aproxima inicial como UTC midnight da data civil destino + offset hora desejada.
+  const civilTarget = new Date(Date.UTC(baseY, baseM - 1, baseD + addDays, hour, minute, 0, 0));
+  // Calcula o offset real do tz para esse instante e corrige.
+  const offsetMin = getTzOffsetMinutes(tz, civilTarget);
+  return new Date(civilTarget.getTime() - offsetMin * 60_000);
+}
+
+function getTzOffsetMinutes(tz: string, atUtc: Date): number {
+  // Diferença entre "hora local no tz" e "UTC" para o instante atUtc.
+  const dtf = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz, hour12: false,
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+  });
+  const parts = dtf.formatToParts(atUtc);
+  const m: Record<string, string> = {};
+  parts.forEach((p) => { m[p.type] = p.value; });
+  const asUtc = Date.UTC(
+    Number(m.year), Number(m.month) - 1, Number(m.day),
+    Number(m.hour) % 24, Number(m.minute), Number(m.second),
+  );
+  return Math.round((asUtc - atUtc.getTime()) / 60_000);
+}
+
 // Verifica se "agora" está dentro do horário comercial do canal usando o tz configurado.
 export function isWithinBusinessHours(bh: any): { ok: boolean; nextWindow: Date | null } {
   if (!bh || typeof bh !== "object") return { ok: true, nextWindow: null };
@@ -42,13 +81,6 @@ export function isWithinBusinessHours(bh: any): { ok: boolean; nextWindow: Date 
   return { ok: false, nextWindow: new Date(Date.now() + 60 * 60 * 1000) };
 }
 
-function nextDateInTz(base: Date, _tz: string, addDays: number, hour: number, minute: number): Date {
-  const d = new Date(base);
-  d.setUTCDate(d.getUTCDate() + addDays);
-  d.setUTCHours(hour + 3, minute, 0, 0); // ajuste BRT (aproximação)
-  return d;
-}
-
 // Verifica janela de envio configurada por campanha (campaign_send_settings).
 export function isWithinCampaignWindow(s: any): { ok: boolean; nextWindow: Date | null } {
   if (!s) return { ok: true, nextWindow: null };
@@ -60,14 +92,18 @@ export function isWithinCampaignWindow(s: any): { ok: boolean; nextWindow: Date 
 }
 
 // Conta envios recentes de um canal via send_logs (status 2xx) dentro de uma janela em ms.
-export async function recentSends(channelId: string, sinceMs: number): Promise<number> {
+// Se `campaignId` for informado, escopa a contagem para aquela campanha — assim os
+// limites por campanha (max_per_minute/hour) não vazam entre campanhas no mesmo chip.
+export async function recentSends(channelId: string, sinceMs: number, campaignId?: string | null): Promise<number> {
   const since = new Date(Date.now() - sinceMs).toISOString();
-  const { count } = await supabaseAdmin
+  let q = supabaseAdmin
     .from("send_logs")
     .select("id", { count: "exact", head: true })
     .eq("channel_id", channelId)
     .gte("created_at", since)
     .gte("http_status", 200).lt("http_status", 300);
+  if (campaignId) q = q.eq("campaign_id", campaignId);
+  const { count } = await q;
   return count ?? 0;
 }
 
