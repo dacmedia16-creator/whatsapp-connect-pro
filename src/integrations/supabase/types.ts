@@ -597,45 +597,60 @@ export type Database = {
       }
       message_queue: {
         Row: {
+          actual_channel_id: string | null
           attachments: Json
           attempts: number
           campaign_recipient_id: string | null
           channel_id: string
+          channel_selection_reason: string | null
           contact_id: string
           created_at: string
+          fallback_used: boolean
           id: string
           last_error: string | null
+          planned_channel_id: string | null
           processed_at: string | null
           rendered_text: string
           scheduled_for: string
+          settings_snapshot: Json | null
           status: Database["public"]["Enums"]["queue_status"]
         }
         Insert: {
+          actual_channel_id?: string | null
           attachments?: Json
           attempts?: number
           campaign_recipient_id?: string | null
           channel_id: string
+          channel_selection_reason?: string | null
           contact_id: string
           created_at?: string
+          fallback_used?: boolean
           id?: string
           last_error?: string | null
+          planned_channel_id?: string | null
           processed_at?: string | null
           rendered_text: string
           scheduled_for?: string
+          settings_snapshot?: Json | null
           status?: Database["public"]["Enums"]["queue_status"]
         }
         Update: {
+          actual_channel_id?: string | null
           attachments?: Json
           attempts?: number
           campaign_recipient_id?: string | null
           channel_id?: string
+          channel_selection_reason?: string | null
           contact_id?: string
           created_at?: string
+          fallback_used?: boolean
           id?: string
           last_error?: string | null
+          planned_channel_id?: string | null
           processed_at?: string | null
           rendered_text?: string
           scheduled_for?: string
+          settings_snapshot?: Json | null
           status?: Database["public"]["Enums"]["queue_status"]
         }
         Relationships: [
