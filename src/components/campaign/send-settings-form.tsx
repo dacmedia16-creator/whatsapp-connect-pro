@@ -10,48 +10,17 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Separator } from "@/components/ui/separator";
 import { ArrowUp, ArrowDown, Smartphone, Clock, Layers } from "lucide-react";
 import { formatPhone } from "@/lib/phone";
+import {
+  SEND_SETTINGS_DEFAULTS as SHARED_DEFAULTS,
+  type SendSettings,
+  type RotationMode as SharedRotationMode,
+} from "@/lib/send-settings-defaults";
 
-export type RotationMode = "round_robin" | "least_used" | "manual_priority";
-
-export type SendSettingsState = {
-  selected_channel_ids: string[];
-  rotation_mode: RotationMode;
-  channel_priority: string[];
-  delay_seconds: number;
-  random_delay_min: number | null;
-  random_delay_max: number | null;
-  max_per_minute: number;
-  max_per_hour: number;
-  max_per_day_per_channel: number;
-  allowed_start_time: string;
-  allowed_end_time: string;
-  allowed_weekdays: number[];
-  timezone: string;
-  auto_pause_outside_hours: boolean;
-  auto_pause_on_all_channels_down: boolean;
-  batch_mode: boolean;
-  batch_pause_seconds: number | null;
-};
-
-export const SEND_SETTINGS_DEFAULTS: SendSettingsState = {
-  selected_channel_ids: [],
-  rotation_mode: "least_used",
-  channel_priority: [],
-  delay_seconds: 30,
-  random_delay_min: null,
-  random_delay_max: null,
-  max_per_minute: 20,
-  max_per_hour: 200,
-  max_per_day_per_channel: 500,
-  allowed_start_time: "09:00",
-  allowed_end_time: "18:00",
-  allowed_weekdays: [1, 2, 3, 4, 5],
-  timezone: "America/Sao_Paulo",
-  auto_pause_outside_hours: true,
-  auto_pause_on_all_channels_down: true,
-  batch_mode: false,
-  batch_pause_seconds: 60,
-};
+// Re-exports da fonte única — qualquer consumidor deve usar os mesmos defaults
+// que o servidor (send-panel.functions.ts) e o sender (sender.server.ts).
+export type RotationMode = SharedRotationMode;
+export type SendSettingsState = SendSettings;
+export const SEND_SETTINGS_DEFAULTS: SendSettings = SHARED_DEFAULTS;
 
 export const WEEKDAYS = [
   { id: 0, label: "Dom" },
