@@ -73,8 +73,9 @@ export async function pickChannel(
     const maxDay = settings?.max_per_day_per_channel ?? ch.daily_limit;
     const sentToday = ch.sent_today_date === ctx.today ? ch.sent_today : 0;
     if (sentToday >= Math.min(maxDay, ch.daily_limit)) continue;
-    if (settings?.max_per_minute && (await recentSends(cid, 60_000)) >= settings.max_per_minute) continue;
-    if (settings?.max_per_hour && (await recentSends(cid, 3_600_000)) >= settings.max_per_hour) continue;
+    // Limites são POR CAMPANHA — escopa send_logs para não vazar entre campanhas.
+    if (settings?.max_per_minute && (await recentSends(cid, 60_000, campaignId)) >= settings.max_per_minute) continue;
+    if (settings?.max_per_hour && (await recentSends(cid, 3_600_000, campaignId)) >= settings.max_per_hour) continue;
     // Pacing por chip: respeita delay_seconds (com jitter, se configurado)
     const minGapSec = Math.max(
       Number(settings?.delay_seconds ?? 0) || 0,

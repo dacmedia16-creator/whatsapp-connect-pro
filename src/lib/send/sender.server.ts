@@ -181,6 +181,14 @@ export async function processQueueItem(item: any, ctx: SenderContext): Promise<P
   if (settings) {
     const cw = isWithinCampaignWindow(settings);
     if (!cw.ok) {
+      // auto_pause_outside_hours: além de reagendar o item, pausa a campanha
+      // para que o gestor veja claramente o motivo de não estar enviando.
+      if (settings.auto_pause_outside_hours && campaignId) {
+        await supabaseAdmin.from("campaigns")
+          .update({ status: "paused" })
+          .eq("id", campaignId)
+          .in("status", ["running", "scheduled"]);
+      }
       await supabaseAdmin.from("message_queue").update({
         status: "pending",
         scheduled_for: (cw.nextWindow ?? new Date(Date.now() + 30 * 60 * 1000)).toISOString(),
