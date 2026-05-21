@@ -36,6 +36,7 @@ import {
 } from "@/lib/send-panel.functions";
 import { enqueueCampaignFn, processQueueFn, testChannelFn } from "@/lib/ziontalk.functions";
 import { formatPhone } from "@/lib/phone";
+import { SEND_SETTINGS_DEFAULTS } from "@/lib/send-settings-defaults";
 
 export const Route = createFileRoute("/_authenticated/sending-panel")({
   component: SendingPanel,
@@ -267,9 +268,9 @@ function ChannelsAndRotation({ campaignId }: { campaignId: string }) {
 
   useEffect(() => {
     if (settings) {
-      setSelected(settings.selected_channel_ids ?? []);
-      setMode((settings.rotation_mode as any) ?? "round_robin");
-      setPriority(settings.channel_priority ?? []);
+      setSelected(settings.selected_channel_ids ?? SEND_SETTINGS_DEFAULTS.selected_channel_ids);
+      setMode((settings.rotation_mode as any) ?? SEND_SETTINGS_DEFAULTS.rotation_mode);
+      setPriority(settings.channel_priority ?? SEND_SETTINGS_DEFAULTS.channel_priority);
     }
   }, [settings]);
 
