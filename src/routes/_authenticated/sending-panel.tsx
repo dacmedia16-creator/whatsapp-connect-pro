@@ -254,8 +254,8 @@ function ChannelsAndRotation({ campaignId }: { campaignId: string }) {
   const saveMut = useSaveSettings(campaignId);
   const getChannels = useServerFn(getChannelsHealthFn);
   const { data: channels = [] } = useQuery({
-    queryKey: ["sp-channels"],
-    queryFn: () => getChannels(),
+    queryKey: ["sp-channels", campaignId],
+    queryFn: () => getChannels({ data: { campaignId } }),
     refetchInterval: 15000,
   });
   const pauseCh = useServerFn(pauseChannelFn);
@@ -329,7 +329,13 @@ function ChannelsAndRotation({ campaignId }: { campaignId: string }) {
                     <ChannelStatusBadge status={c.status} />
                   </div>
                   <div className="text-xs text-muted-foreground mt-1 flex flex-wrap gap-x-3">
-                    <span>Enviados hoje: <strong>{c.sent_today_effective}</strong> / {c.daily_limit}</span>
+                    {c.scope === "campaign" ? (
+                      <span title="Envios desta campanha hoje neste chip / consumo total do chip hoje (todas as campanhas) / limite do chip">
+                        Desta campanha: <strong>{c.sent_today_campaign ?? 0}</strong> · Global hoje: <strong>{c.sent_today_effective}</strong> / {c.daily_limit}
+                      </span>
+                    ) : (
+                      <span>Enviados hoje: <strong>{c.sent_today_effective}</strong> / {c.daily_limit}</span>
+                    )}
                     <span>Saldo: <strong>{c.remaining_today}</strong></span>
                     <span>Último envio: {c.last_sent_at ? formatDistanceToNow(new Date(c.last_sent_at), { locale: ptBR, addSuffix: true }) : "—"}</span>
                     {c.last_error && <span className="text-destructive truncate" title={c.last_error}>Erro: {c.last_error.slice(0, 60)}</span>}
