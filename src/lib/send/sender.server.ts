@@ -198,6 +198,8 @@ export async function processQueueItem(item: any, ctx: SenderContext): Promise<P
   }
 
   // (3) Seleção/rotação de canal + (10) auto-pause se todos indisponíveis
+  let selectionReason = "rotation:default";
+  let fallbackUsed = false;
   if (campaignId && settings) {
     const picked = await pickChannel(ctx, settings, ch.id, campaignId);
     if (!picked) {
@@ -205,14 +207,18 @@ export async function processQueueItem(item: any, ctx: SenderContext): Promise<P
         status: "pending",
         scheduled_for: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
         last_error: "todos os canais indisponíveis (limite/status)",
+        channel_selection_reason: "no_channel_available",
+        fallback_used: true,
       }).eq("id", item.id);
       if (settings.auto_pause_on_all_channels_down) {
         await supabaseAdmin.from("campaigns").update({ status: "paused" }).eq("id", campaignId);
       }
       return "rescheduled";
     }
-    if (picked.id !== ch.id) {
-      ch = picked;
+    selectionReason = picked.reason;
+    fallbackUsed = picked.fallback;
+    if (picked.channel.id !== ch.id) {
+      ch = picked.channel;
       await supabaseAdmin.from("message_queue").update({ channel_id: ch.id }).eq("id", item.id);
     }
   }
@@ -309,7 +315,13 @@ export async function processQueueItem(item: any, ctx: SenderContext): Promise<P
   if (result.ok) {
     // (7) Atualiza status da fila + canal + recipient
     await supabaseAdmin.from("message_queue")
-      .update({ status: "sent", processed_at: new Date().toISOString() }).eq("id", item.id);
+      .update({
+        status: "sent",
+        processed_at: new Date().toISOString(),
+        actual_channel_id: ch.id,
+        channel_selection_reason: selectionReason,
+        fallback_used: fallbackUsed,
+      }).eq("id", item.id);
     await supabaseAdmin.from("channels").update({
       status: "connected",
       sent_today: sentToday + 1,
