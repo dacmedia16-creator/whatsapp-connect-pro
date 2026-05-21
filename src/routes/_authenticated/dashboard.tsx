@@ -45,18 +45,25 @@ function DashboardPage() {
       since.setHours(0, 0, 0, 0);
       const sinceIso = since.toISOString();
 
-      const [logs, channels, campaigns, inMsgs, deliveredCount, attemptedCount, failedCount] = await Promise.all([
-        supabase.from("send_logs").select("http_status, created_at").gte("created_at", sinceIso).limit(10000),
+      const [sentRecsWindow, channels, campaigns, inMsgs, deliveredCount, failedCount, attemptedCount] = await Promise.all([
+        // Destinatários efetivamente entregues nos últimos 14 dias (para o gráfico)
+        supabase
+          .from("campaign_recipients")
+          .select("sent_at")
+          .eq("status", "sent")
+          .gte("sent_at", sinceIso)
+          .limit(10000),
         supabase.from("channels").select("id, label, status, sent_today, daily_limit"),
         supabase.from("campaigns").select("id, name, status").in("status", ["running", "scheduled"]),
         supabase.from("messages").select("conversation_id, created_at").eq("direction", "in").gte("created_at", sinceIso).limit(10000),
-        // Totais reais (não limitados a 1000)
+        // Totais reais por destinatário (fonte única — bate com Painel e Relatórios)
         supabase.from("campaign_recipients").select("*", { count: "exact", head: true }).eq("status", "sent"),
+        supabase.from("campaign_recipients").select("*", { count: "exact", head: true }).eq("status", "failed"),
+        // Tentativas de API (apenas hint informativo)
         supabase.from("send_logs").select("*", { count: "exact", head: true }).not("http_status", "is", null),
-        supabase.from("send_logs").select("*", { count: "exact", head: true }).gte("http_status", 300),
       ]);
       return {
-        logs: logs.data ?? [],
+        sentRecsWindow: sentRecsWindow.data ?? [],
         channels: channels.data ?? [],
         campaigns: campaigns.data ?? [],
         inMsgs: inMsgs.data ?? [],
@@ -74,8 +81,9 @@ function DashboardPage() {
   const delivered = data?.delivered ?? 0;
   const attempted = data?.attempted ?? 0;
   const failed = data?.failed ?? 0;
-  const successes = Math.max(attempted - failed, 0);
-  const deliveryRate = attempted > 0 ? Math.round((successes / attempted) * 100) : null;
+  // Taxa de entrega usa a MESMA fonte (campaign_recipients): sent / (sent + failed)
+  const totalProcessed = delivered + failed;
+  const deliveryRate = totalProcessed > 0 ? Math.round((delivered / totalProcessed) * 100) : null;
 
   // Respostas únicas (por conversa) nos últimos 14 dias
   const uniqueReplyConvs = new Set(
@@ -94,10 +102,11 @@ function DashboardPage() {
     return { date: key, label: d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }), sent: 0, in: 0 };
   });
   const idx = new Map(days.map((d) => [d.date, d]));
-  (data?.logs ?? []).forEach((l) => {
-    const k = dayKey(l.created_at as string);
+  (data?.sentRecsWindow ?? []).forEach((r: any) => {
+    if (!r.sent_at) return;
+    const k = dayKey(r.sent_at as string);
     const row = idx.get(k);
-    if (row && l.http_status && l.http_status < 300) row.sent++;
+    if (row) row.sent++;
   });
   (data?.inMsgs ?? []).forEach((m) => {
     const k = dayKey(m.created_at as string);
@@ -117,13 +126,13 @@ function DashboardPage() {
       />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <StatCard icon={Send} label="Mensagens enviadas" value={delivered} tone="info" hint={`${attempted.toLocaleString("pt-BR")} tentativas de API`} />
+        <StatCard icon={Send} label="Mensagens enviadas" value={delivered} tone="info" hint={`${attempted.toLocaleString("pt-BR")} tentativas de API (inclui retries)`} />
         <StatCard
           icon={CheckCheck}
           label="Taxa de entrega"
           value={deliveryRate === null ? "—" : `${deliveryRate}%`}
           tone={deliveryRate !== null && deliveryRate >= 90 ? "success" : "warning"}
-          hint={`${successes.toLocaleString("pt-BR")} ok · ${failed.toLocaleString("pt-BR")} falhas`}
+          hint={`${delivered.toLocaleString("pt-BR")} entregues · ${failed.toLocaleString("pt-BR")} falhas`}
         />
         <StatCard
           icon={MessageSquareText}
@@ -229,7 +238,7 @@ function DashboardPage() {
               Saúde dos canais
             </CardTitle>
             <p className="text-sm text-muted-foreground mt-1">
-              Limite diário, status de conexão e utilização atual.
+              Uso global do dia por chip (inclui todas as campanhas e envios manuais).
             </p>
           </div>
         </CardHeader>

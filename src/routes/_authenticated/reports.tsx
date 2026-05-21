@@ -70,21 +70,35 @@ function OverviewReport() {
     queryKey: ["report-overview", days],
     queryFn: async () => {
       const since = periodStart(days).toISOString();
-      const { data: logs } = await supabase
-        .from("send_logs")
-        .select("created_at, http_status")
-        .gte("created_at", since)
-        .limit(10000);
+      // Usa campaign_recipients como fonte única (igual ao Dashboard e Painel).
+      const [{ data: sentRecs }, { data: failedRecs }] = await Promise.all([
+        supabase
+          .from("campaign_recipients")
+          .select("sent_at")
+          .eq("status", "sent")
+          .gte("sent_at", since)
+          .limit(10000),
+        supabase
+          .from("campaign_recipients")
+          .select("created_at")
+          .eq("status", "failed")
+          .gte("created_at", since)
+          .limit(10000),
+      ]);
       const buckets: Record<string, { day: string; sent: number; failed: number }> = {};
       for (let i = days - 1; i >= 0; i--) {
         const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - i);
         const key = d.toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
         buckets[key] = { day: key.slice(5), sent: 0, failed: 0 };
       }
-      (logs ?? []).forEach((l: any) => {
-        const key = new Date(l.created_at).toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
-        const b = buckets[key]; if (!b) return;
-        if (l.http_status < 300) b.sent++; else b.failed++;
+      (sentRecs ?? []).forEach((r: any) => {
+        if (!r.sent_at) return;
+        const key = new Date(r.sent_at).toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+        const b = buckets[key]; if (b) b.sent++;
+      });
+      (failedRecs ?? []).forEach((r: any) => {
+        const key = new Date(r.created_at).toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+        const b = buckets[key]; if (b) b.failed++;
       });
       return Object.values(buckets);
     },
