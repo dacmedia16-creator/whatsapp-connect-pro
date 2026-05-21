@@ -4,6 +4,7 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { zionSendMessage, logSend } from "./ziontalk.server";
 import { createSenderContext, processQueueItem } from "@/lib/send/sender.server";
+import { normalizeSendSettings } from "@/lib/send-settings-defaults";
 
 async function getChannelApiKey(channelId: string): Promise<string> {
   const secret = process.env.CHANNEL_KEY_SECRET;
@@ -336,14 +337,22 @@ export async function enqueueCampaignCore(campaignId: string): Promise<{ enqueue
     }
 
     // Lê configurações por campanha (canais, rotação, delays, janela).
-    const { data: settings } = await supabaseAdmin
+    const { data: settingsRow } = await supabaseAdmin
       .from("campaign_send_settings")
       .select("*")
       .eq("campaign_id", campaign.id)
       .maybeSingle();
+    // Se não existe linha, semeia defaults canônicos antes de prosseguir.
+    if (!settingsRow) {
+      await supabaseAdmin.from("campaign_send_settings")
+        .upsert({ campaign_id: campaign.id, ...normalizeSendSettings(null) }, { onConflict: "campaign_id" });
+    }
+    const settings = normalizeSendSettings(settingsRow ?? null);
 
-    // Resolve canais: settings > campaign.channel_ids > todos não pausados.
-    const settingsChannelIds = (settings?.selected_channel_ids ?? []) as string[];
+    // Fonte única: campaign_send_settings.selected_channel_ids.
+    // campaign.channel_ids só é usado como SEED de migração quando settings
+    // ainda não tinha canais — não como fonte de verdade em runtime.
+    const settingsChannelIds = settings.selected_channel_ids ?? [];
     const campaignChannelIds = (campaign.channel_ids as string[]) ?? [];
     const channelIds = settingsChannelIds.length ? settingsChannelIds : campaignChannelIds;
     let channelsQ = supabaseAdmin
@@ -365,11 +374,12 @@ export async function enqueueCampaignCore(campaignId: string): Promise<{ enqueue
     const startAt = campaign.scheduled_at ? new Date(campaign.scheduled_at).getTime() : Date.now();
     const contactMap = new Map(contacts.map((c) => [c.id, c]));
     const today = new Date().toISOString().slice(0, 10);
-    const rotationMode = (settings?.rotation_mode ?? "round_robin") as string;
-    const priority = (settings?.channel_priority ?? []) as string[];
-    const delaySeconds = Math.max(0, settings?.delay_seconds ?? Math.floor(60 / Math.max(1, campaign.rate_per_min || 20)));
-    const jitterMin = settings?.random_delay_min ?? 0;
-    const jitterMax = settings?.random_delay_max ?? 0;
+    const rotationMode = settings.rotation_mode;
+    const priority = settings.channel_priority;
+    const delaySeconds = Math.max(0, settings.delay_seconds);
+    const jitterMin = settings.random_delay_min ?? 0;
+    const jitterMax = settings.random_delay_max ?? 0;
+    const batchMode = settings.batch_mode;
     // contador local de uso por canal para least_used
     const localUsage = new Map<string, number>(
       channelList.map((c) => [c.id, c.sent_today_date === today ? (c.sent_today ?? 0) : 0]),
@@ -404,10 +414,12 @@ export async function enqueueCampaignCore(campaignId: string): Promise<{ enqueue
         /\{\{\s*([\w.]+)\s*\}\}/g,
         (_: string, k: string) => vars[k] ?? "",
       );
-      const baseOffsetMs = idx * delaySeconds * 1000;
-      const jitterMs = jitterMax > jitterMin
+      // batch_mode: sender controla o pacing via pushBatchScheduledFor;
+      // todos os itens entram com scheduled_for=startAt e o sender empurra.
+      const baseOffsetMs = batchMode ? 0 : idx * delaySeconds * 1000;
+      const jitterMs = !batchMode && jitterMax > jitterMin
         ? Math.floor((jitterMin + Math.random() * (jitterMax - jitterMin)) * 1000)
-        : (jitterMin ? jitterMin * 1000 : 0);
+        : (!batchMode && jitterMin ? jitterMin * 1000 : 0);
       const scheduledFor = new Date(startAt + baseOffsetMs + jitterMs);
       return {
         campaign_recipient_id: r.id,
