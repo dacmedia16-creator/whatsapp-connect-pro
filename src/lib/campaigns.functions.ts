@@ -5,6 +5,7 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { classifyRows, type RawRow, type ResolvedContact, type ResolveSummary, emptySummary } from "./recipient-resolver";
 import { normalizePhoneE164 } from "./phone";
 import { enqueueCampaignCore } from "./ziontalk.functions";
+import { SEND_SETTINGS_DEFAULTS } from "./send-settings-defaults";
 
 async function assertManager(userId: string) {
   const { data } = await supabaseAdmin.from("user_roles").select("role").eq("user_id", userId);
@@ -366,23 +367,26 @@ export const createCampaignFn = createServerFn({ method: "POST" })
     const s = data.sendSettings;
     const settingsRow = {
       campaign_id: campaign.id,
+      // Defaults canônicos compartilhados com servidor/cliente.
+      // O array de canais cai para os canais selecionados na criação quando o usuário
+      // não passou um array explícito no formulário avançado.
       selected_channel_ids: s?.selected_channel_ids?.length ? s.selected_channel_ids : channelIds,
-      rotation_mode: s?.rotation_mode ?? ("least_used" as const),
+      rotation_mode: s?.rotation_mode ?? SEND_SETTINGS_DEFAULTS.rotation_mode,
       channel_priority: s?.channel_priority?.length ? s.channel_priority : channelIds,
-      delay_seconds: s?.delay_seconds ?? 30,
-      random_delay_min: s?.random_delay_min ?? null,
-      random_delay_max: s?.random_delay_max ?? null,
-      max_per_minute: s?.max_per_minute ?? 20,
-      max_per_hour: s?.max_per_hour ?? 200,
-      max_per_day_per_channel: s?.max_per_day_per_channel ?? 500,
-      allowed_start_time: s?.allowed_start_time ?? "09:00",
-      allowed_end_time: s?.allowed_end_time ?? "18:00",
-      allowed_weekdays: s?.allowed_weekdays ?? [1, 2, 3, 4, 5],
-      timezone: s?.timezone ?? "America/Sao_Paulo",
-      auto_pause_outside_hours: s?.auto_pause_outside_hours ?? true,
-      auto_pause_on_all_channels_down: s?.auto_pause_on_all_channels_down ?? true,
-      batch_mode: s?.batch_mode ?? false,
-      batch_pause_seconds: s?.batch_pause_seconds ?? null,
+      delay_seconds: s?.delay_seconds ?? SEND_SETTINGS_DEFAULTS.delay_seconds,
+      random_delay_min: s?.random_delay_min ?? SEND_SETTINGS_DEFAULTS.random_delay_min,
+      random_delay_max: s?.random_delay_max ?? SEND_SETTINGS_DEFAULTS.random_delay_max,
+      max_per_minute: s?.max_per_minute ?? SEND_SETTINGS_DEFAULTS.max_per_minute,
+      max_per_hour: s?.max_per_hour ?? SEND_SETTINGS_DEFAULTS.max_per_hour,
+      max_per_day_per_channel: s?.max_per_day_per_channel ?? SEND_SETTINGS_DEFAULTS.max_per_day_per_channel,
+      allowed_start_time: s?.allowed_start_time ?? SEND_SETTINGS_DEFAULTS.allowed_start_time,
+      allowed_end_time: s?.allowed_end_time ?? SEND_SETTINGS_DEFAULTS.allowed_end_time,
+      allowed_weekdays: s?.allowed_weekdays ?? SEND_SETTINGS_DEFAULTS.allowed_weekdays,
+      timezone: s?.timezone ?? SEND_SETTINGS_DEFAULTS.timezone,
+      auto_pause_outside_hours: s?.auto_pause_outside_hours ?? SEND_SETTINGS_DEFAULTS.auto_pause_outside_hours,
+      auto_pause_on_all_channels_down: s?.auto_pause_on_all_channels_down ?? SEND_SETTINGS_DEFAULTS.auto_pause_on_all_channels_down,
+      batch_mode: s?.batch_mode ?? SEND_SETTINGS_DEFAULTS.batch_mode,
+      batch_pause_seconds: s?.batch_pause_seconds ?? SEND_SETTINGS_DEFAULTS.batch_pause_seconds,
     };
     const { error: sErr } = await supabaseAdmin
       .from("campaign_send_settings")
