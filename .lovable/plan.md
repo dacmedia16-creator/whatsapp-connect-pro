@@ -1,38 +1,50 @@
-## O que está errado
+## Diagnóstico
 
-Validando contra o banco, encontrei 4 inconsistências reais no **Dashboard** e nos **Relatórios** que fazem os números não baterem entre as telas:
+Os dados da campanha **Feedback Semanal** estão corretos no banco para a campanha: **77 destinatários**, **77 enviados**, **77 registros na fila como sent**, **77 logs 2xx**.
 
-### 1. Dashboard — "Taxa de entrega" está sempre 100%
-A fórmula é `delivered / sent`, mas o código define `delivered = sent`. Logo, sempre dá 100%, mesmo que existam 68 falhas no banco.
-**Correção:** calcular como `sucessos / (sucessos + falhas)` usando `send_logs.http_status` (≥300 = falha).
+A divergência vem de telas usando fontes diferentes para o mesmo número:
 
-### 2. Dashboard — "Mensagens enviadas" não bate com o resto do app
-- Dashboard mostra `send_logs` com `http_status<300` = **202** (inclui testes, retries, reenvios).
-- Painel de campanha mostra `campaign_recipients.status='sent'` = **160**.
-São métricas diferentes com o mesmo rótulo. O usuário vê "200" aqui e "160" ali e acha que está errado.
-**Correção:** trocar a métrica do Dashboard para **destinatários entregues** (`campaign_recipients` com `status='sent'`), que é o que aparece nas campanhas e no painel de envios. Os 202 do `send_logs` viram um card secundário "Tentativas de API".
+- **Dashboard / Saúde dos canais** usa `channels.sent_today`, que soma envios de todos os tipos e pode incluir envios manuais/testes ou campanhas anteriores do dia.
+- **Painel de Envios** mostra por campanha usando `campaign_recipients` e `message_queue`, mas a aba de canais mostra saúde global dos canais.
+- **Relatórios** ainda mistura `send_logs`, `messages`, `campaign_recipients` e `channels.sent_today`, então os números não fecham entre telas.
 
-### 3. Dashboard — "Taxa de resposta" mistura tudo
-`replies = todas mensagens recebidas no histórico` ÷ `tentativas de envio`. Não filtra por campanha nem por janela de tempo, e pode passar de 100%.
-**Correção:** contar **contatos únicos** que responderam após o primeiro envio de campanha, dentro do mesmo período do gráfico (14 dias).
+Exemplo real encontrado:
 
-### 4. Dashboard e Relatórios — Gráfico por dia com fuso errado
-O agrupamento usa `created_at.slice(0,10)` (UTC). Como o usuário está em BRT (UTC-3), envios feitos depois das 21h aparecem **no dia seguinte** no gráfico.
-**Correção:** converter para `America/Sao_Paulo` antes de pegar a data (`toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" })`).
+```text
+Campanha Feedback Semanal: 77 enviados
+Envio 1: 13 da campanha, sent_today 13
+Envio 2: 14 da campanha, sent_today 16  <- 2 envios extras fora dessa campanha
+Envio 3: 25 da campanha, sent_today 25
+Envio 4: 25 da campanha, sent_today 25
+Soma campanha: 77
+Soma sent_today: 79
+```
 
-### 5. Bônus — limite silencioso de 1000 linhas
-PostgREST corta em 1000 por padrão. Hoje você tem 209 logs, então ainda não morde, mas quando passar de 1000 os números vão "parar de crescer" sem aviso.
-**Correção:** trocar as queries de contagem por `select("*", { count: "exact", head: true })` no dashboard.
+## Plano de correção
 
----
+1. **Criar uma fonte única para métricas de envio**
+   - Centralizar as contagens em server functions, usando `campaign_recipients` como verdade para progresso de campanha.
+   - Usar `send_logs` apenas como “tentativas/API”, não como “mensagens enviadas”.
+   - Usar `messages` apenas para conversas/mensagens exibidas, não para progresso de campanha.
 
-## Arquivos a alterar
+2. **Corrigir o Dashboard**
+   - Card “Mensagens enviadas”: total de `campaign_recipients.status = 'sent'`.
+   - Card “Taxa de entrega”: `sent / (sent + failed)` usando destinatários da campanha, não logs globais.
+   - Gráfico diário: agrupar enviados por `campaign_recipients.sent_at` em São Paulo.
+   - Saúde dos canais: deixar claro se é **uso global de hoje** ou mudar para contagem real de `send_logs` por canal no dia.
 
-- `src/routes/_authenticated/dashboard.tsx` — refatorar os 4 stat cards e o gráfico (itens 1–5)
-- `src/routes/_authenticated/reports.tsx` — corrigir agrupamento por fuso em `OverviewReport` (item 4) e nos demais agrupamentos por dia
+3. **Corrigir o Painel de Envios**
+   - Overview e progresso: contar direto por `campaign_recipients` da campanha selecionada.
+   - “Total na fila” deve representar total da campanha, não total de linhas existentes em `message_queue`.
+   - Aba “Canais”: adicionar/usar contagem **dessa campanha por canal**, para não confundir com `sent_today` global.
+   - Manter `sent_today` apenas como controle de limite diário do chip.
 
-Sem mudanças no backend / banco — é tudo correção de fórmula e fuso no frontend.
+4. **Corrigir Relatórios**
+   - Relatório por campanha: usar `campaign_recipients` para enviados/falhas/pendentes/opt-out.
+   - Relatório por canal: separar “enviadas hoje por campanha/log” de “contador de limite diário”.
+   - Visão geral: gráfico por dia baseado em `campaign_recipients.sent_at` e falhas por status do destinatário.
 
-## Confirmação rápida
-
-Quer que eu vá direto pelo plano acima, ou prefere que eu corrija só **o Dashboard** primeiro (que é o que aparece logo que você entra) e deixe Relatórios para depois?
+5. **Validação final**
+   - Conferir novamente no banco a campanha Feedback Semanal.
+   - Confirmar que Dashboard, Painel de Envios e Relatórios mostram os mesmos totais para enviados/falhas/pendentes.
+   - Manter os números de “tentativas API” como métrica separada quando necessário.
