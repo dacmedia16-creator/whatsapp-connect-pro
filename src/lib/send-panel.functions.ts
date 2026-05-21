@@ -82,24 +82,43 @@ export const getSendPanelOverviewFn = createServerFn({ method: "GET" })
   .inputValidator((i) => z.object({ campaignId: z.string().uuid().nullable().optional() }).parse(i))
   .handler(async ({ data }) => {
     const campaignId = data.campaignId ?? null;
-    let queueQ = supabaseAdmin.from("message_queue").select("status", { count: "exact", head: false });
-    if (campaignId) {
-      // join via campaign_recipient -> campaign filter
-      const { data: recs } = await supabaseAdmin
-        .from("campaign_recipients")
-        .select("id")
-        .eq("campaign_id", campaignId);
-      const ids = (recs ?? []).map((r) => r.id);
-      if (!ids.length) {
-        return { total: 0, pending: 0, sent: 0, failed: 0, processing: 0, activeChannels: 0, ratePerMin: 0 };
-      }
-      queueQ = queueQ.in("campaign_recipient_id", ids);
-    }
-    const { data: rows } = await queueQ.limit(10000);
+    // Fonte única de verdade: campaign_recipients (mesmo que Dashboard e Relatórios).
+    // message_queue é detalhe de processamento; recipients é o que conta.
     const counts = { pending: 0, sent: 0, failed: 0, processing: 0 };
-    (rows ?? []).forEach((r: { status: string }) => {
-      if (r.status in counts) counts[r.status as keyof typeof counts]++;
-    });
+    let total = 0;
+    if (campaignId) {
+      const [totalQ, sentQ, failedQ, queuedQ] = await Promise.all([
+        supabaseAdmin.from("campaign_recipients").select("*", { count: "exact", head: true }).eq("campaign_id", campaignId),
+        supabaseAdmin.from("campaign_recipients").select("*", { count: "exact", head: true }).eq("campaign_id", campaignId).eq("status", "sent"),
+        supabaseAdmin.from("campaign_recipients").select("*", { count: "exact", head: true }).eq("campaign_id", campaignId).eq("status", "failed"),
+        supabaseAdmin.from("campaign_recipients").select("*", { count: "exact", head: true }).eq("campaign_id", campaignId).eq("status", "queued"),
+      ]);
+      total = totalQ.count ?? 0;
+      counts.sent = sentQ.count ?? 0;
+      counts.failed = failedQ.count ?? 0;
+      counts.pending = queuedQ.count ?? 0;
+      // "processing" = itens da fila em andamento agora para essa campanha
+      const { data: recs } = await supabaseAdmin
+        .from("campaign_recipients").select("id").eq("campaign_id", campaignId).eq("status", "queued");
+      const recIds = (recs ?? []).map((r) => r.id);
+      if (recIds.length) {
+        const { count: proc } = await supabaseAdmin
+          .from("message_queue").select("*", { count: "exact", head: true })
+          .eq("status", "processing").in("campaign_recipient_id", recIds);
+        counts.processing = proc ?? 0;
+      }
+    } else {
+      const [totalQ, sentQ, failedQ, queuedQ] = await Promise.all([
+        supabaseAdmin.from("campaign_recipients").select("*", { count: "exact", head: true }),
+        supabaseAdmin.from("campaign_recipients").select("*", { count: "exact", head: true }).eq("status", "sent"),
+        supabaseAdmin.from("campaign_recipients").select("*", { count: "exact", head: true }).eq("status", "failed"),
+        supabaseAdmin.from("campaign_recipients").select("*", { count: "exact", head: true }).eq("status", "queued"),
+      ]);
+      total = totalQ.count ?? 0;
+      counts.sent = sentQ.count ?? 0;
+      counts.failed = failedQ.count ?? 0;
+      counts.pending = queuedQ.count ?? 0;
+    }
 
     const { count: activeChannels } = await supabaseAdmin
       .from("channels").select("*", { count: "exact", head: true })
@@ -111,7 +130,6 @@ export const getSendPanelOverviewFn = createServerFn({ method: "GET" })
     if (campaignId) logsQ = logsQ.eq("campaign_id", campaignId);
     const { count: ratePerMin } = await logsQ;
 
-    const total = counts.pending + counts.sent + counts.failed + counts.processing;
     return { total, ...counts, activeChannels: activeChannels ?? 0, ratePerMin: ratePerMin ?? 0 };
   });
 

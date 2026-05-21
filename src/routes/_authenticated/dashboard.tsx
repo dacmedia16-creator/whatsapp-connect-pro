@@ -238,7 +238,7 @@ function DashboardPage() {
               Saúde dos canais
             </CardTitle>
             <p className="text-sm text-muted-foreground mt-1">
-              Limite diário, status de conexão e utilização atual.
+              Uso global do dia por chip (inclui todas as campanhas e envios manuais).
             </p>
           </div>
         </CardHeader>
