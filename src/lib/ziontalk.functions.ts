@@ -4,7 +4,8 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { zionSendMessage, logSend } from "./ziontalk.server";
 import { createSenderContext, processQueueItem } from "@/lib/send/sender.server";
-import { normalizeSendSettings } from "@/lib/send-settings-defaults";
+import { normalizeSendSettings, SEND_SETTINGS_DEFAULTS } from "@/lib/send-settings-defaults";
+import { pickChannelForEnqueue } from "@/lib/send/channel-selector.server";
 
 async function getChannelApiKey(channelId: string): Promise<string> {
   const secret = process.env.CHANNEL_KEY_SECRET;
@@ -18,41 +19,8 @@ async function getChannelApiKey(channelId: string): Promise<string> {
   return data as string;
 }
 
-function nextDateInTz(base: Date, addDays: number, hour: number, minute: number): Date {
-  const d = new Date(base);
-  d.setUTCDate(d.getUTCDate() + addDays);
-  d.setUTCHours(hour + 3, minute, 0, 0);
-  return d;
-}
-
-function getBusinessHoursWindow(bh: any): { ok: boolean; nextWindow: Date | null } {
-  if (!bh || typeof bh !== "object") return { ok: true, nextWindow: null };
-  const tz: string = bh.tz ?? "UTC";
-  const days: number[] = Array.isArray(bh.days) ? bh.days : [0, 1, 2, 3, 4, 5, 6];
-  const start: string = bh.start ?? "00:00";
-  const end: string = bh.end ?? "23:59";
-  const now = new Date();
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: tz, hour12: false, weekday: "short", hour: "2-digit", minute: "2-digit",
-  }).formatToParts(now);
-  const map: Record<string, string> = {};
-  parts.forEach((p) => { map[p.type] = p.value; });
-  const wdNames: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
-  const wd = wdNames[map.weekday] ?? 1;
-  const hhmm = `${map.hour}:${map.minute}`;
-  if (days.includes(wd) && hhmm >= start && hhmm <= end) return { ok: true, nextWindow: null };
-
-  for (let i = 0; i < 8; i++) {
-    const cand = new Date(now.getTime() + i * 24 * 60 * 60 * 1000);
-    const dayParts = new Intl.DateTimeFormat("en-US", { timeZone: tz, hour12: false, weekday: "short" }).formatToParts(cand);
-    const day = wdNames[dayParts.find((x) => x.type === "weekday")?.value ?? "Mon"] ?? 1;
-    if (!days.includes(day)) continue;
-    const [h, m] = start.split(":").map(Number);
-    if (i === 0 && hhmm < start) return { ok: false, nextWindow: nextDateInTz(now, 0, h, m) };
-    if (i > 0) return { ok: false, nextWindow: nextDateInTz(now, i, h, m) };
-  }
-  return { ok: false, nextWindow: new Date(Date.now() + 60 * 60 * 1000) };
-}
+// (helpers legados nextDateInTz/getBusinessHoursWindow removidos — usar
+// src/lib/send/rate-limit.server.ts, que respeita timezone real via Intl.)
 
 /** Send a message via a specific channel. Used by admin actions and inbox replies. */
 export const sendMessageFn = createServerFn({ method: "POST" })
