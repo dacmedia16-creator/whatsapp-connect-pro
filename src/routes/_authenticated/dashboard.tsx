@@ -35,42 +35,72 @@ function DashboardPage() {
   const { data } = useQuery({
     queryKey: ["dashboard"],
     queryFn: async () => {
-      const [logs, channels, campaigns, inMsgs] = await Promise.all([
-        supabase.from("send_logs").select("http_status, created_at"),
+      // 14-day window for chart + response rate, in São Paulo time
+      const SP_TZ = "America/Sao_Paulo";
+      const dayKey = (iso: string) =>
+        new Date(iso).toLocaleDateString("en-CA", { timeZone: SP_TZ });
+      const today = new Date();
+      const since = new Date(today);
+      since.setDate(today.getDate() - 13);
+      since.setHours(0, 0, 0, 0);
+      const sinceIso = since.toISOString();
+
+      const [logs, channels, campaigns, inMsgs, deliveredCount, attemptedCount, failedCount] = await Promise.all([
+        supabase.from("send_logs").select("http_status, created_at").gte("created_at", sinceIso).limit(10000),
         supabase.from("channels").select("id, label, status, sent_today, daily_limit"),
-        supabase.from("campaigns").select("id, status").in("status", ["running", "scheduled"]),
-        supabase.from("messages").select("id, created_at").eq("direction", "in"),
+        supabase.from("campaigns").select("id, name, status").in("status", ["running", "scheduled"]),
+        supabase.from("messages").select("conversation_id, created_at").eq("direction", "in").gte("created_at", sinceIso).limit(10000),
+        // Totais reais (não limitados a 1000)
+        supabase.from("campaign_recipients").select("*", { count: "exact", head: true }).eq("status", "sent"),
+        supabase.from("send_logs").select("*", { count: "exact", head: true }).not("http_status", "is", null),
+        supabase.from("send_logs").select("*", { count: "exact", head: true }).gte("http_status", 300),
       ]);
       return {
         logs: logs.data ?? [],
         channels: channels.data ?? [],
         campaigns: campaigns.data ?? [],
         inMsgs: inMsgs.data ?? [],
+        delivered: deliveredCount.count ?? 0,
+        attempted: attemptedCount.count ?? 0,
+        failed: failedCount.count ?? 0,
+        dayKey,
+        sinceIso,
       };
     },
   });
 
-  const sent = (data?.logs ?? []).filter((l) => l.http_status && l.http_status < 300).length;
-  const delivered = sent;
-  const replies = data?.inMsgs.length ?? 0;
-  const responseRate = pct(replies, sent);
+  // Métrica de "Mensagens enviadas" = destinatários efetivamente entregues
+  // (mesma fonte do painel de envios e dos relatórios)
+  const delivered = data?.delivered ?? 0;
+  const attempted = data?.attempted ?? 0;
+  const failed = data?.failed ?? 0;
+  const successes = Math.max(attempted - failed, 0);
+  const deliveryRate = attempted > 0 ? Math.round((successes / attempted) * 100) : null;
+
+  // Respostas únicas (por conversa) nos últimos 14 dias
+  const uniqueReplyConvs = new Set(
+    (data?.inMsgs ?? []).map((m: any) => m.conversation_id).filter(Boolean),
+  );
+  const replies = uniqueReplyConvs.size;
+  const responseRate = pct(replies, delivered);
 
   // chart: last 14 days of sends
   const today = new Date();
+  const dayKey = data?.dayKey ?? ((iso: string) => new Date(iso).toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" }));
   const days = Array.from({ length: 14 }, (_, i) => {
     const d = new Date(today);
     d.setDate(today.getDate() - (13 - i));
-    const key = d.toISOString().slice(0, 10);
+    const key = d.toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
     return { date: key, label: d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }), sent: 0, in: 0 };
   });
   const idx = new Map(days.map((d) => [d.date, d]));
   (data?.logs ?? []).forEach((l) => {
-    const k = (l.created_at as string).slice(0, 10);
+    const k = dayKey(l.created_at as string);
     const row = idx.get(k);
     if (row && l.http_status && l.http_status < 300) row.sent++;
   });
   (data?.inMsgs ?? []).forEach((m) => {
-    const k = (m.created_at as string).slice(0, 10);
+    const k = dayKey(m.created_at as string);
     const row = idx.get(k);
     if (row) row.in++;
   });
@@ -87,20 +117,20 @@ function DashboardPage() {
       />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <StatCard icon={Send} label="Mensagens enviadas" value={sent} tone="info" hint="acumulado total" />
+        <StatCard icon={Send} label="Mensagens enviadas" value={delivered} tone="info" hint={`${attempted.toLocaleString("pt-BR")} tentativas de API`} />
         <StatCard
           icon={CheckCheck}
           label="Taxa de entrega"
-          value={delivered ? `${Math.round((delivered / Math.max(sent, 1)) * 100)}%` : "—"}
-          tone="success"
-          hint="HTTP 2xx em send_logs"
+          value={deliveryRate === null ? "—" : `${deliveryRate}%`}
+          tone={deliveryRate !== null && deliveryRate >= 90 ? "success" : "warning"}
+          hint={`${successes.toLocaleString("pt-BR")} ok · ${failed.toLocaleString("pt-BR")} falhas`}
         />
         <StatCard
           icon={MessageSquareText}
           label="Taxa de resposta"
           value={responseRate}
           tone="default"
-          hint={`${replies} respostas`}
+          hint={`${replies} contatos · 14 dias`}
         />
         <StatCard
           icon={Smartphone}
@@ -178,9 +208,9 @@ function DashboardPage() {
               />
             ) : (
               <ul className="divide-y divide-border">
-                {data?.campaigns.map((c) => (
+                {data?.campaigns.map((c: any) => (
                   <li key={c.id} className="flex items-center justify-between py-3 first:pt-0 last:pb-0">
-                    <span className="text-sm font-medium truncate">{c.id.slice(0, 8)}</span>
+                    <span className="text-sm font-medium truncate">{c.name ?? c.id.slice(0, 8)}</span>
                     <Badge variant={c.status === "running" ? "success" : "info"} className="capitalize">
                       {c.status}
                     </Badge>

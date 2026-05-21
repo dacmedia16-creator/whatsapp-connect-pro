@@ -78,11 +78,11 @@ function OverviewReport() {
       const buckets: Record<string, { day: string; sent: number; failed: number }> = {};
       for (let i = days - 1; i >= 0; i--) {
         const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - i);
-        const key = d.toISOString().slice(0, 10);
+        const key = d.toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
         buckets[key] = { day: key.slice(5), sent: 0, failed: 0 };
       }
       (logs ?? []).forEach((l: any) => {
-        const key = l.created_at.slice(0, 10);
+        const key = new Date(l.created_at).toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
         const b = buckets[key]; if (!b) return;
         if (l.http_status < 300) b.sent++; else b.failed++;
       });
