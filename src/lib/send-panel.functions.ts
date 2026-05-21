@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { SEND_SETTINGS_DEFAULTS, normalizeSendSettings } from "./send-settings-defaults";
+import { pickChannelForEnqueue } from "@/lib/send/channel-selector.server";
 
 async function assertManager(userId: string) {
   const { data } = await supabaseAdmin.from("user_roles").select("role").eq("user_id", userId);
@@ -354,17 +355,36 @@ export const getQueueRowsFn = createServerFn({ method: "GET" })
     const ids = recs.map((r) => r.id);
     const { data: queue } = await supabaseAdmin
       .from("message_queue")
-      .select("campaign_recipient_id, status, attempts, scheduled_for, processed_at, last_error")
+      .select("campaign_recipient_id, status, attempts, scheduled_for, processed_at, last_error, planned_channel_id, actual_channel_id, channel_selection_reason, fallback_used")
       .in("campaign_recipient_id", ids);
     const qMap = new Map<string, any>();
     (queue ?? []).forEach((q) => { if (q.campaign_recipient_id) qMap.set(q.campaign_recipient_id, q); });
+    // Resolve labels para planned/actual em uma única query.
+    const channelIds = new Set<string>();
+    (queue ?? []).forEach((q: any) => {
+      if (q.planned_channel_id) channelIds.add(q.planned_channel_id);
+      if (q.actual_channel_id) channelIds.add(q.actual_channel_id);
+    });
+    const labelMap = new Map<string, string>();
+    if (channelIds.size) {
+      const { data: chs } = await supabaseAdmin
+        .from("channels").select("id, label").in("id", Array.from(channelIds));
+      (chs ?? []).forEach((c: any) => labelMap.set(c.id, c.label));
+    }
     return recs.map((r) => {
       const q = qMap.get(r.id);
+      const plannedId = q?.planned_channel_id ?? null;
+      const actualId = q?.actual_channel_id ?? r.channel_id ?? null;
       return {
         id: r.id,
         name: (r.contact as any)?.name ?? "—",
         phone: (r.contact as any)?.phone_e164 ?? "",
         channel: (r.channel as any)?.label ?? "—",
+        planned_channel: plannedId ? (labelMap.get(plannedId) ?? "—") : null,
+        actual_channel: actualId ? (labelMap.get(actualId) ?? (r.channel as any)?.label ?? "—") : null,
+        selection_reason: q?.channel_selection_reason ?? null,
+        fallback_used: !!q?.fallback_used,
+        chip_diverged: !!(plannedId && actualId && plannedId !== actualId),
         status: q?.status ?? r.status,
         attempts: q?.attempts ?? 0,
         last_attempt_at: q?.processed_at ?? r.sent_at ?? null,
@@ -386,4 +406,74 @@ export const getLiveActivityFn = createServerFn({ method: "GET" })
     if (data.campaignId) q = q.eq("campaign_id", data.campaignId);
     const { data: rows } = await q;
     return rows ?? [];
+  });
+
+// =============================================================================
+// Dry-run / simulação. NÃO envia, NÃO grava em message_queue.
+// Para cada destinatário elegível, executa pickChannelForEnqueue e relata o que
+// aconteceria, ajudando o gestor a auditar antes de iniciar a campanha real.
+// =============================================================================
+export const simulateCampaignFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((i) => z.object({ campaignId: z.string().uuid() }).parse(i))
+  .handler(async ({ data, context }) => {
+    await assertManager(context.userId);
+    const { data: settingsRow } = await supabaseAdmin
+      .from("campaign_send_settings").select("*").eq("campaign_id", data.campaignId).maybeSingle();
+    const settings = normalizeSendSettings(settingsRow);
+    if (!settings.selected_channel_ids.length) {
+      return { ok: false, reason: "Nenhum canal selecionado em campaign_send_settings", rows: [], summary: null };
+    }
+    const { data: channels } = await supabaseAdmin
+      .from("channels")
+      .select("id, label, status, daily_limit, sent_today, sent_today_date")
+      .in("id", settings.selected_channel_ids);
+    const channelsForPick = (channels ?? []).map((c: any) => ({
+      id: c.id, status: c.status, daily_limit: c.daily_limit,
+      sent_today: c.sent_today ?? 0, sent_today_date: c.sent_today_date,
+    }));
+    const labelById = new Map<string, string>((channels ?? []).map((c: any) => [c.id, c.label]));
+    const { data: recs } = await supabaseAdmin
+      .from("campaign_recipients")
+      .select("id, status, contact:contacts(id, name, phone_e164, consent, opt_out_at)")
+      .eq("campaign_id", data.campaignId)
+      .limit(2000);
+    const today = new Date().toISOString().slice(0, 10);
+    const cursor = { value: Number((settingsRow as any)?.rotation_cursor ?? 0) || 0 };
+    const localUsage = new Map<string, number>();
+
+    const summary = { total: 0, would_send: 0, blocked_no_consent: 0, blocked_opt_out: 0, blocked_no_channel: 0 };
+    const rows = (recs ?? []).map((r: any) => {
+      summary.total++;
+      const c = r.contact;
+      if (!c) {
+        summary.blocked_no_channel++;
+        return { id: r.id, name: "—", phone: "—", status: "blocked_no_channel", planned_channel: null, reason: "contato ausente" };
+      }
+      if (c.opt_out_at) {
+        summary.blocked_opt_out++;
+        return { id: r.id, name: c.name, phone: c.phone_e164, status: "blocked_opt_out", planned_channel: null, reason: "opt-out" };
+      }
+      if (!c.consent) {
+        summary.blocked_no_consent++;
+        return { id: r.id, name: c.name, phone: c.phone_e164, status: "blocked_no_consent", planned_channel: null, reason: "sem consentimento" };
+      }
+      const picked = pickChannelForEnqueue({
+        settings: { ...SEND_SETTINGS_DEFAULTS, ...settings, rotation_cursor: cursor.value } as any,
+        channels: channelsForPick, today, cursor: cursor.value, localUsage,
+      });
+      if (!picked) {
+        summary.blocked_no_channel++;
+        return { id: r.id, name: c.name, phone: c.phone_e164, status: "blocked_no_channel", planned_channel: null, reason: "nenhum canal disponível" };
+      }
+      cursor.value = picked.next_cursor;
+      summary.would_send++;
+      return {
+        id: r.id, name: c.name, phone: c.phone_e164,
+        status: "would_send",
+        planned_channel: labelById.get(picked.channel_id) ?? picked.channel_id,
+        reason: picked.reason + (picked.fallback ? " (fallback)" : ""),
+      };
+    });
+    return { ok: true, reason: null, rows, summary };
   });
