@@ -168,6 +168,7 @@ export type Database = {
           max_per_minute: number
           random_delay_max: number | null
           random_delay_min: number | null
+          rotation_cursor: number
           rotation_mode: Database["public"]["Enums"]["rotation_mode"]
           selected_channel_ids: string[]
           timezone: string
@@ -190,6 +191,7 @@ export type Database = {
           max_per_minute?: number
           random_delay_max?: number | null
           random_delay_min?: number | null
+          rotation_cursor?: number
           rotation_mode?: Database["public"]["Enums"]["rotation_mode"]
           selected_channel_ids?: string[]
           timezone?: string
@@ -212,6 +214,7 @@ export type Database = {
           max_per_minute?: number
           random_delay_max?: number | null
           random_delay_min?: number | null
+          rotation_cursor?: number
           rotation_mode?: Database["public"]["Enums"]["rotation_mode"]
           selected_channel_ids?: string[]
           timezone?: string
