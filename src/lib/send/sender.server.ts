@@ -202,11 +202,24 @@ export async function processQueueItem(item: any, ctx: SenderContext): Promise<P
   let fallbackUsed = false;
   if (campaignId && settings) {
     const picked = await pickChannel(ctx, settings, ch.id, campaignId);
-    if (!picked) {
+    if (picked.channel === null) {
+      // Distingue motivo: pacing temporário NÃO pausa a campanha, apenas
+      // reagenda o item. Só pausamos quando todos os chips estão realmente
+      // indisponíveis (paused/error/limite diário).
+      if (picked.failure === "pacing_wait") {
+        await supabaseAdmin.from("message_queue").update({
+          status: "pending",
+          scheduled_for: new Date(Date.now() + picked.retryAfterMs).toISOString(),
+          last_error: "aguardando intervalo entre envios (pacing)",
+          channel_selection_reason: "pacing_wait",
+          fallback_used: false,
+        }).eq("id", item.id);
+        return "rescheduled";
+      }
       await supabaseAdmin.from("message_queue").update({
         status: "pending",
-        scheduled_for: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
-        last_error: "todos os canais indisponíveis (limite/status)",
+        scheduled_for: new Date(Date.now() + picked.retryAfterMs).toISOString(),
+        last_error: "todos os canais indisponíveis (status/limite diário)",
         channel_selection_reason: "no_channel_available",
         fallback_used: true,
       }).eq("id", item.id);
