@@ -13,11 +13,12 @@ export type CampaignMedia = {
   size: number;
 };
 
+const MAX_SIZE = 30 * 1024 * 1024;
 const LIMITS: Record<CampaignMedia["type"], { mimes: string[]; max: number }> = {
-  image: { mimes: ["image/jpeg", "image/png", "image/webp", "image/gif"], max: 5 * 1024 * 1024 },
-  video: { mimes: ["video/mp4", "video/3gpp", "video/quicktime"], max: 16 * 1024 * 1024 },
-  audio: { mimes: ["audio/mpeg", "audio/mp3", "audio/ogg", "audio/aac", "audio/amr", "audio/wav"], max: 10 * 1024 * 1024 },
-  document: { mimes: ["application/pdf"], max: 20 * 1024 * 1024 },
+  image: { mimes: ["image/jpeg", "image/png", "image/webp", "image/gif"], max: MAX_SIZE },
+  video: { mimes: ["video/mp4", "video/3gpp", "video/quicktime"], max: MAX_SIZE },
+  audio: { mimes: ["audio/mpeg", "audio/mp3", "audio/ogg", "audio/aac", "audio/amr", "audio/wav"], max: MAX_SIZE },
+  document: { mimes: ["application/pdf"], max: MAX_SIZE },
 };
 
 const ACCEPT = Object.values(LIMITS).flatMap((l) => l.mimes).join(",");
@@ -154,7 +155,7 @@ export function CampaignMediaPicker({
         {uploading ? "Enviando…" : "Anexar imagem, vídeo, áudio ou PDF"}
       </Button>
       <p className="text-xs text-muted-foreground mt-1">
-        Imagem ≤5MB · Vídeo ≤16MB · Áudio ≤10MB · PDF ≤20MB
+        Imagem, vídeo, áudio ou PDF ≤30MB
       </p>
     </div>
   );
