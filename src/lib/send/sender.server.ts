@@ -202,7 +202,7 @@ export async function processQueueItem(item: any, ctx: SenderContext): Promise<P
   let fallbackUsed = false;
   if (campaignId && settings) {
     const picked = await pickChannel(ctx, settings, ch.id, campaignId);
-    if (picked.channel === null) {
+    if ("failure" in picked) {
       // Distingue motivo: pacing temporário NÃO pausa a campanha, apenas
       // reagenda o item. Só pausamos quando todos os chips estão realmente
       // indisponíveis (paused/error/limite diário).
