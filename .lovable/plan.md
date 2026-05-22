@@ -1,14 +1,14 @@
-## Aumentar limite de anexos para 30 MB
+## Despausar campanha "Feedback REMAX"
 
-Atualmente os limites em `src/components/campaign/media-picker.tsx` são:
-- Imagem: 5 MB
-- Vídeo: 16 MB
-- Áudio: 10 MB
-- PDF: 20 MB
+Aplicar uma migration única que retoma a campanha pausada agora há pouco:
 
-### Mudança
-Subir todos para **30 MB** em `LIMITS` e atualizar o texto auxiliar abaixo do botão para "Imagem, vídeo, áudio ou PDF ≤30MB".
+```sql
+update public.campaigns
+   set status = 'running', updated_at = now()
+ where id = 'a497d320-dd1b-408a-a091-8caf0a2a6d23'
+   and status = 'paused';
+```
 
-### Observações importantes
-- O bucket `campaign-media` no Storage tem um `file_size_limit` próprio. Se estiver definido abaixo de 30 MB, uploads vão falhar com erro do Storage mesmo com o front liberado. Vou verificar e, se necessário, criar migration para subir o limite do bucket para 30 MB (≈ 31457280 bytes).
-- A API ZionTalk pode ter seu próprio teto por tipo de mídia (especialmente vídeo, que no WhatsApp oficial é 16 MB). Arquivos acima do limite real do provedor vão retornar erro no envio — o limite de upload no app sobe, mas o envio em si pode falhar. Quer que eu mantenha 30 MB para todos mesmo assim, ou prefere 30 MB só onde faz sentido (ex.: PDF/áudio) e manter vídeo em 16 MB?
+Sem alteração de schema, lógica ou configurações. Apenas troca o status de `paused` → `running` para que o cron volte a processar a fila pendente dessa campanha.
+
+**Aviso:** a causa raiz do auto-pause indevido (descrita na mensagem anterior — `auto_pause_on_all_channels_down` disparando em pacing temporário) **continua presente**. Se nada for ajustado, a campanha pode voltar a pausar pelo mesmo motivo em poucos minutos. Recomendo, em seguida, aprovar também a correção do bug de classificação no `pickChannel` / `sender`.
