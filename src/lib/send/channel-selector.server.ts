@@ -43,6 +43,17 @@ export type PickResult = {
   intended_id: string | null; // canal que a regra principal indicava (pode estar bloqueado por limite/status)
 };
 
+// Quando pickChannel não consegue escolher canal, devolvemos o MOTIVO em vez
+// de null plano, para o sender decidir se pausa a campanha (chip caído/limite
+// atingido) ou só reagenda o item (pacing temporário — esperando delay).
+export type PickFailure = {
+  channel: null;
+  failure: "all_channels_down" | "pacing_wait";
+  retryAfterMs: number; // sugestão de quando tentar de novo (mínimo entre os candidatos em pacing)
+};
+
+export type PickOutcome = PickResult | PickFailure;
+
 // Seleciona um canal válido respeitando settings (rotação, limites/min, /hora, /dia, status).
 // Retorna PickResult com motivo e fallback. NÃO altera estado se já estávamos no canal
 // intended; quando precisamos pular para um secundário, marca fallback=true.
@@ -51,7 +62,7 @@ export async function pickChannel(
   settings: any,
   currentChannelId: string,
   campaignId: string,
-): Promise<PickResult | null> {
+): Promise<PickOutcome> {
   const selected: string[] = (settings?.selected_channel_ids ?? []).filter(Boolean);
   const allowed = selected.length ? selected : [currentChannelId];
   const mode = settings?.rotation_mode ?? "round_robin";
@@ -82,6 +93,13 @@ export async function pickChannel(
     candidates.push(...withUsage.map((x) => x.id));
   }
 
+  // Rastreia, entre os candidatos rejeitados, se TODOS foram bloqueados por
+  // motivos "duros" (status/limite diário/limites por minuto/hora) ou se algum
+  // foi bloqueado apenas por pacing (delay_seconds). Isso decide se devemos
+  // pausar a campanha ou apenas reagendar o item.
+  let anyPacingOnly = false;
+  let minPacingWaitMs = Number.POSITIVE_INFINITY;
+
   for (const cid of candidates) {
     const ch = await getChannel(ctx, cid);
     if (!ch) continue;
@@ -90,8 +108,17 @@ export async function pickChannel(
     const sentToday = ch.sent_today_date === ctx.today ? ch.sent_today : 0;
     if (sentToday >= Math.min(maxDay, ch.daily_limit)) continue;
     // Limites são POR CAMPANHA — escopa send_logs para não vazar entre campanhas.
-    if (settings?.max_per_minute && (await recentSends(cid, 60_000, campaignId)) >= settings.max_per_minute) continue;
-    if (settings?.max_per_hour && (await recentSends(cid, 3_600_000, campaignId)) >= settings.max_per_hour) continue;
+    // Atingir max_per_minute/hour é considerado pacing temporário (não pausa).
+    if (settings?.max_per_minute && (await recentSends(cid, 60_000, campaignId)) >= settings.max_per_minute) {
+      anyPacingOnly = true;
+      minPacingWaitMs = Math.min(minPacingWaitMs, 60_000);
+      continue;
+    }
+    if (settings?.max_per_hour && (await recentSends(cid, 3_600_000, campaignId)) >= settings.max_per_hour) {
+      anyPacingOnly = true;
+      minPacingWaitMs = Math.min(minPacingWaitMs, 5 * 60_000);
+      continue;
+    }
     // Pacing por chip: respeita delay_seconds (com jitter, se configurado)
     const minGapSec = Math.max(
       Number(settings?.delay_seconds ?? 0) || 0,
@@ -99,7 +126,12 @@ export async function pickChannel(
     );
     if (minGapSec > 0) {
       const last = await lastSendAt(cid);
-      if (last && Date.now() - last.getTime() < minGapSec * 1000) continue;
+      if (last && Date.now() - last.getTime() < minGapSec * 1000) {
+        anyPacingOnly = true;
+        const waitMs = minGapSec * 1000 - (Date.now() - last.getTime());
+        minPacingWaitMs = Math.min(minPacingWaitMs, Math.max(1000, waitMs));
+        continue;
+      }
     }
     // Avança cursor apenas no modo round_robin e somente quando um chip
     // é efetivamente retornado (evita pular posições em retries vazios).
@@ -123,7 +155,14 @@ export async function pickChannel(
       intended_id: intendedId,
     };
   }
-  return null;
+  if (anyPacingOnly) {
+    return {
+      channel: null,
+      failure: "pacing_wait",
+      retryAfterMs: Number.isFinite(minPacingWaitMs) ? minPacingWaitMs : 30_000,
+    };
+  }
+  return { channel: null, failure: "all_channels_down", retryAfterMs: 10 * 60_000 };
 }
 
 // ===========================================================================
