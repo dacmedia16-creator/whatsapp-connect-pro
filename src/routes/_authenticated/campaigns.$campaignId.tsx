@@ -306,6 +306,20 @@ function CampaignDetail() {
                     <Play className="h-4 w-4 mr-1" /> Retomar
                   </Button>
                 )}
+                {campaign.status === "done" && (stats?.queued ?? 0) > 0 && (
+                  <Button
+                    onClick={() => {
+                      if (withinWindow || bypassActive) {
+                        statusMut.mutate({ status: "running" });
+                      } else {
+                        setResumeDialogOpen(true);
+                      }
+                    }}
+                    title={`${stats?.queued ?? 0} destinatário(s) ficaram sem envio`}
+                  >
+                    <Play className="h-4 w-4 mr-1" /> Reativar e continuar ({stats?.queued ?? 0})
+                  </Button>
+                )}
                 {(campaign.status === "running" || campaign.status === "paused" || campaign.status === "scheduled") && (
                   <Button variant="outline" onClick={() => statusMut.mutate({ status: "done" })}>
                     <Square className="h-4 w-4 mr-1" /> Finalizar
