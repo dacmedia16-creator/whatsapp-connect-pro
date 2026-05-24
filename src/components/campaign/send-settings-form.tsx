@@ -321,7 +321,24 @@ export function SendSettingsForm({
                 <div className="text-xs text-muted-foreground">Use o canal de maior prioridade enquanto disponível.</div>
               </div>
             </label>
+            <label className="flex items-start gap-3 p-3 border rounded-md cursor-pointer">
+              <RadioGroupItem value="simple_call" />
+              <div>
+                <div className="text-sm font-medium">Chama Simples</div>
+                <div className="text-xs text-muted-foreground">
+                  1 envio por canal em sequência, <b>15 segundos</b> entre canais. Requer no mínimo 4 canais selecionados.
+                  Ignora delays, limites por minuto/hora e modo lote.
+                </div>
+              </div>
+            </label>
           </RadioGroup>
+
+          {simpleCallTooFew && (
+            <div className="flex items-start gap-2 p-3 border border-destructive/40 bg-destructive/10 rounded-md text-sm text-destructive">
+              <AlertTriangle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+              <span>Chama Simples requer no mínimo 4 canais selecionados. Atualmente: {form.selected_channel_ids.length}.</span>
+            </div>
+          )}
 
           {form.rotation_mode === "manual_priority" && (
             <div className="space-y-2">
