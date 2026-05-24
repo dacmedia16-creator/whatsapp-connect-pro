@@ -154,6 +154,25 @@ function CampaignDetail() {
     refetchInterval: 30000,
   });
 
+  const { data: sendTiming } = useQuery({
+    queryKey: ["campaign-timing", campaignId],
+    queryFn: async () => {
+      const [{ data: first }, { data: last }] = await Promise.all([
+        supabase.from("campaign_recipients").select("sent_at")
+          .eq("campaign_id", campaignId).not("sent_at", "is", null)
+          .order("sent_at", { ascending: true }).limit(1).maybeSingle(),
+        supabase.from("campaign_recipients").select("sent_at")
+          .eq("campaign_id", campaignId).not("sent_at", "is", null)
+          .order("sent_at", { ascending: false }).limit(1).maybeSingle(),
+      ]);
+      return {
+        startedAt: first?.sent_at ? new Date(first.sent_at as string) : null,
+        lastSentAt: last?.sent_at ? new Date(last.sent_at as string) : null,
+      };
+    },
+    refetchInterval: live ? false : 15000,
+  });
+
   const windowCheck = sendSettings ? isWithinCampaignWindowPure(sendSettings) : { ok: true, nextWindow: null };
   const withinWindow = windowCheck.ok;
   const nextWindowDate = windowCheck.nextWindow;
@@ -348,7 +367,7 @@ function CampaignDetail() {
             <span className="font-medium">{progress}%</span>
           </div>
           <Progress value={progress} />
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3 text-sm">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mt-3 text-sm">
             <div>
               <p className="text-muted-foreground text-xs">Agendada para</p>
               <p>{campaign.scheduled_at ? format(new Date(campaign.scheduled_at), "dd/MM/yyyy HH:mm", { locale: ptBR }) : "Imediato"}</p>
@@ -365,6 +384,14 @@ function CampaignDetail() {
               <p className="text-muted-foreground text-xs">Tags do público</p>
               <p>{((campaign.audience_filter as any)?.tags ?? []).join(", ") || "todos"}</p>
             </div>
+            <EtaCell
+              status={campaign.status as string}
+              queued={stats?.queued ?? 0}
+              sendSettings={sendSettings}
+              ratePerMin={campaign.rate_per_min}
+              channelsCount={(campaign.channel_ids as string[]).length}
+              lastSentAt={sendTiming?.lastSentAt ?? null}
+            />
           </div>
         </CardContent>
       </Card>
@@ -599,6 +626,70 @@ function StatCard({ label, value, cls }: { label: string; value: React.ReactNode
         <p className={`text-2xl font-display mt-1 ${cls ?? ""}`}>{value}</p>
       </CardContent>
     </Card>
+  );
+}
+
+function formatDuration(ms: number): string {
+  if (ms < 60_000) return "<1min";
+  const totalMin = Math.round(ms / 60_000);
+  if (totalMin < 60) return `~${totalMin}min`;
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  return m ? `~${h}h ${m}min` : `~${h}h`;
+}
+
+function EtaCell({
+  status, queued, sendSettings, ratePerMin, channelsCount, lastSentAt,
+}: {
+  status: string;
+  queued: number;
+  sendSettings: any;
+  ratePerMin: number;
+  channelsCount: number;
+  lastSentAt: Date | null;
+}) {
+  if (status === "done") {
+    return (
+      <div>
+        <p className="text-muted-foreground text-xs">Finalizada em</p>
+        <p>{lastSentAt ? format(lastSentAt, "dd/MM HH:mm", { locale: ptBR }) : "—"}</p>
+      </div>
+    );
+  }
+  if (queued <= 0 || !sendSettings) {
+    return (
+      <div>
+        <p className="text-muted-foreground text-xs">Previsão de término</p>
+        <p className="text-muted-foreground">—</p>
+      </div>
+    );
+  }
+  let secPerMsg: number;
+  if (sendSettings.rotation_mode === "simple_call") {
+    secPerMsg = Math.max(5, Number(sendSettings.delay_seconds) || 15);
+  } else {
+    const ch = Math.max(1, (sendSettings.selected_channel_ids?.length ?? channelsCount) || 1);
+    const msgsPerMin = Math.max(1, (ratePerMin || 1) * ch);
+    secPerMsg = 60 / msgsPerMin;
+  }
+  const etaMs = queued * secPerMsg * 1000;
+  const duration = formatDuration(etaMs);
+  if (status === "paused") {
+    return (
+      <div>
+        <p className="text-muted-foreground text-xs">Previsão (pausada)</p>
+        <p title="Estimativa baseada na configuração atual">restam {duration}</p>
+      </div>
+    );
+  }
+  const etaDate = new Date(Date.now() + etaMs);
+  return (
+    <div>
+      <p className="text-muted-foreground text-xs">Previsão de término</p>
+      <p title="Estimativa baseada na configuração de envio atual">
+        {duration} <span className="text-muted-foreground">(≈ {format(etaDate, "HH:mm", { locale: ptBR })})</span>
+      </p>
+    </div>
   );
 }
 
