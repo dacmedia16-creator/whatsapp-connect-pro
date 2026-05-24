@@ -212,6 +212,7 @@ export const setCampaignStatusFn = createServerFn({ method: "POST" })
   .inputValidator((i) => z.object({
     campaignId: z.string().uuid(),
     status: z.enum(["draft", "scheduled", "running", "paused", "done"]),
+    force_now: z.boolean().optional(),
   }).parse(i))
   .handler(async ({ data, context }) => {
     await assertManager(context.userId);
@@ -244,6 +245,20 @@ export const setCampaignStatusFn = createServerFn({ method: "POST" })
           .update({ scheduled_for: new Date().toISOString(), last_error: null })
           .eq("status", "pending")
           .in("campaign_recipient_id", ids);
+      }
+      // Override de janela: força envio fora do horário por 30 minutos.
+      // O sender respeita esse timestamp e pula o reagendamento de "próxima janela".
+      if (data.force_now) {
+        const until = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+        await supabaseAdmin
+          .from("campaign_send_settings")
+          .update({ bypass_window_until: until })
+          .eq("campaign_id", data.campaignId);
+      } else {
+        await supabaseAdmin
+          .from("campaign_send_settings")
+          .update({ bypass_window_until: null })
+          .eq("campaign_id", data.campaignId);
       }
     } else if (data.status === "done") {
       // Cancelar/finalizar: drena fila e marca recipients restantes como failed.
