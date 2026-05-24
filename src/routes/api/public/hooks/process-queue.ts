@@ -62,33 +62,34 @@ export const Route = createFileRoute("/api/public/hooks/process-queue")({
             .map((it: any) => it?.recipient?.campaign_id)
             .filter(Boolean) as string[],
         ));
-        const simpleCallCampaigns = new Set<string>();
+        const simpleCallCampaigns = new Map<string, number>(); // campaignId -> gapMs
         if (campaignIds.length) {
           const { data: settings } = await supabaseAdmin
             .from("campaign_send_settings")
-            .select("campaign_id, rotation_mode")
+            .select("campaign_id, rotation_mode, delay_seconds")
             .in("campaign_id", campaignIds);
           for (const s of settings ?? []) {
             if ((s as any).rotation_mode === "simple_call") {
-              simpleCallCampaigns.add((s as any).campaign_id);
+              const gapSec = Math.max(5, Number((s as any).delay_seconds) || 15);
+              simpleCallCampaigns.set((s as any).campaign_id, gapSec * 1000);
             }
           }
         }
 
-        const SIMPLE_CALL_GAP_MS = 15_000;
         const TICK_BUDGET_MS = 50_000; // teto de segurança (reaper = 5min)
         const tickStart = Date.now();
         const processedIds: string[] = [];
 
         for (const item of items ?? []) {
           const campaignId: string | null = item?.recipient?.campaign_id ?? null;
-          const isSimpleCall = campaignId ? simpleCallCampaigns.has(campaignId) : false;
+          const gapMs = campaignId ? simpleCallCampaigns.get(campaignId) : undefined;
+          const isSimpleCall = gapMs !== undefined;
 
           if (isSimpleCall && campaignId) {
             const last = await lastCampaignSendAt(campaignId);
             if (last) {
               const elapsed = Date.now() - last.getTime();
-              const waitMs = SIMPLE_CALL_GAP_MS - elapsed;
+              const waitMs = gapMs! - elapsed;
               if (waitMs > 0) {
                 // Se esperar estourar o orçamento do tick, libera os restantes
                 // (incluindo este) e deixa o próximo tick pegar.
