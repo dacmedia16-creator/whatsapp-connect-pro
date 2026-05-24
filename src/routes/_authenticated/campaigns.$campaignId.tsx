@@ -17,6 +17,8 @@ import { toast } from "sonner";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { enqueueCampaignFn, processQueueFn } from "@/lib/ziontalk.functions";
+import { setCampaignStatusFn, getSendSettingsFn } from "@/lib/send-panel.functions";
+import { isWithinCampaignWindowPure } from "@/lib/send/window-utils";
 import { formatPhone } from "@/lib/phone";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -38,11 +40,14 @@ function CampaignDetail() {
   const qc = useQueryClient();
   const enqueue = useServerFn(enqueueCampaignFn);
   const processBatch = useServerFn(processQueueFn);
+  const setStatusFn = useServerFn(setCampaignStatusFn);
+  const getSettingsFn = useServerFn(getSendSettingsFn);
   const [live, setLive] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [eventPage, setEventPage] = useState(0);
   const [eventFilter, setEventFilter] = useState<"all" | "queued" | "sent" | "delivered" | "failed" | "opted_out">("all");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [resumeDialogOpen, setResumeDialogOpen] = useState(false);
   const PAGE_SIZE = 25;
 
   const { data: campaign, isLoading } = useQuery({
@@ -177,14 +182,15 @@ function CampaignDetail() {
   });
 
   const statusMut = useMutation({
-    mutationFn: async (next: "draft" | "scheduled" | "running" | "paused" | "done") => {
-      const { error } = await supabase.from("campaigns").update({ status: next }).eq("id", campaignId);
-      if (error) throw error;
+    mutationFn: async (input: { status: "draft" | "scheduled" | "running" | "paused" | "done"; force_now?: boolean }) => {
+      await setStatusFn({ data: { campaignId, ...input } });
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["campaign", campaignId] });
+      qc.invalidateQueries({ queryKey: ["campaign-send-settings", campaignId] });
       toast.success("Status atualizado");
     },
+    onError: (e: Error) => toast.error(e.message),
   });
 
   if (isLoading) return <div className="p-6 text-muted-foreground">Carregando…</div>;
