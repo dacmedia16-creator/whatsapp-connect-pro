@@ -374,9 +374,13 @@ export function SendSettingsForm({
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Velocidade e limites</CardTitle>
-          <CardDescription>Controle a cadência de envios para evitar bloqueios.</CardDescription>
+          <CardDescription>
+            {isSimpleCall
+              ? "Desativado no modo Chama Simples (fixo 15s entre canais)."
+              : "Controle a cadência de envios para evitar bloqueios."}
+          </CardDescription>
         </CardHeader>
-        <CardContent className="grid sm:grid-cols-2 gap-4">
+        <CardContent className={`grid sm:grid-cols-2 gap-4 ${isSimpleCall ? "opacity-50 pointer-events-none" : ""}`}>
           <div className="space-y-1">
             <Label>Delay entre envios (segundos)</Label>
             <Input type="number" min={0} value={form.delay_seconds}
