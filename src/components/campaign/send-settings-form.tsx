@@ -423,11 +423,12 @@ export function SendSettingsForm({
             <Layers className="h-4 w-4" /> Lotes sincronizados
           </CardTitle>
           <CardDescription>
-            Quando ligado, todos os canais disparam ao mesmo tempo (1 mensagem cada), aguardam a pausa, e disparam o próximo lote.
-            Quando desligado, cada chip segue seu próprio relógio (throughput máximo).
+            {isSimpleCall
+              ? "Desativado no modo Chama Simples."
+              : "Quando ligado, todos os canais disparam ao mesmo tempo (1 mensagem cada), aguardam a pausa, e disparam o próximo lote. Quando desligado, cada chip segue seu próprio relógio (throughput máximo)."}
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className={`space-y-4 ${isSimpleCall ? "opacity-50 pointer-events-none" : ""}`}>
           <div className="flex items-center justify-between p-3 border rounded-md">
             <div>
               <Label className="text-sm">Sincronizar lotes paralelos</Label>
