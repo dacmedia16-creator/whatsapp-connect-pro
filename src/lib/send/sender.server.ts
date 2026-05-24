@@ -179,8 +179,10 @@ export async function processQueueItem(item: any, ctx: SenderContext): Promise<P
 
   // (5/9 — janela da campanha) Se fora da janela configurada, reagenda.
   if (settings) {
+    const bypassUntilStr = (settings as any).bypass_window_until as string | null | undefined;
+    const bypassActive = !!bypassUntilStr && new Date(bypassUntilStr).getTime() > Date.now();
     const cw = isWithinCampaignWindow(settings);
-    if (!cw.ok) {
+    if (!cw.ok && !bypassActive) {
       // auto_pause_outside_hours: além de reagendar o item, pausa a campanha
       // para que o gestor veja claramente o motivo de não estar enviando.
       if (settings.auto_pause_outside_hours && campaignId) {
