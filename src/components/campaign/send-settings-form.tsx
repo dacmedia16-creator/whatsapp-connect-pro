@@ -49,12 +49,9 @@ export type ChannelOption = {
   label: string;
   phone_e164: string;
   status: string;
-  business_hours?: {
-    tz?: string;
-    start?: string;
-    end?: string;
-    days?: number[];
-  } | null;
+  // `business_hours` vem como Json do Supabase; tratamos defensivamente no
+  // componente para extrair `days/start/end`.
+  business_hours?: unknown;
 };
 
 export function validateSendSettings(form: SendSettingsState): string | null {
@@ -159,13 +156,24 @@ export function SendSettingsForm({
   // "Canais") é mais restrito do que a janela da campanha. O sender ignora
   // o horário do chip quando a campanha tem settings — o banner é
   // informativo, apenas para o usuário entender o comportamento.
+  type BH = { tz?: string; start?: string; end?: string; days?: number[] };
+  const parseBH = (raw: unknown): BH | null => {
+    if (!raw || typeof raw !== "object") return null;
+    const r = raw as Record<string, unknown>;
+    return {
+      tz: typeof r.tz === "string" ? r.tz : undefined,
+      start: typeof r.start === "string" ? r.start : undefined,
+      end: typeof r.end === "string" ? r.end : undefined,
+      days: Array.isArray(r.days) ? (r.days as unknown[]).filter((x): x is number => typeof x === "number") : undefined,
+    };
+  };
   const channelHoursConflicts = form.selected_channel_ids
     .map((id) => channels.find((c) => c.id === id))
     .filter((c): c is ChannelOption => !!c)
-    .filter((c) => {
-      const bh = c.business_hours;
+    .map((c) => ({ c, bh: parseBH(c.business_hours) }))
+    .filter(({ bh }) => {
       if (!bh) return false;
-      const days = Array.isArray(bh.days) ? bh.days : [];
+      const days = bh.days ?? [];
       const missingDay = form.allowed_weekdays.some((d) => !days.includes(d));
       const startConflict = !!bh.start && bh.start > form.allowed_start_time;
       const endConflict = !!bh.end && bh.end < form.allowed_end_time;
@@ -187,13 +195,12 @@ export function SendSettingsForm({
           </CardHeader>
           <CardContent>
             <ul className="text-xs text-amber-900 dark:text-amber-200 space-y-1">
-              {channelHoursConflicts.map((c) => {
-                const bh = c.business_hours!;
-                const days = Array.isArray(bh.days) ? bh.days : [];
+              {channelHoursConflicts.map(({ c, bh }) => {
+                const days = bh?.days ?? [];
                 const labels = WEEKDAYS.filter((d) => days.includes(d.id)).map((d) => d.label).join(", ") || "—";
                 return (
                   <li key={c.id}>
-                    <b>{c.label}</b>: {labels} · {bh.start || "00:00"}–{bh.end || "23:59"}
+                    <b>{c.label}</b>: {labels} · {bh?.start || "00:00"}–{bh?.end || "23:59"}
                   </li>
                 );
               })}
