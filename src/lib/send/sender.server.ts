@@ -340,6 +340,7 @@ export async function processQueueItem(item: any, ctx: SenderContext): Promise<P
         actual_channel_id: ch.id,
         channel_selection_reason: selectionReason,
         fallback_used: fallbackUsed,
+        processing_started_at: null,
       }).eq("id", item.id);
     await supabaseAdmin.from("channels").update({
       status: "connected",
@@ -395,20 +396,32 @@ export async function processQueueItem(item: any, ctx: SenderContext): Promise<P
   const attempts = (item.attempts ?? 0) + 1;
   const tooMany = attempts >= 3;
   const backoffMs = Math.min(60_000 * Math.pow(2, attempts), 60 * 60_000);
+  const errLine = `[HTTP ${result.status}${result.requestId ? ` req=${result.requestId}` : ""}] ${(result.body || "sem corpo").slice(0, 440)}`;
+  console.error("[send-fail]", {
+    queueId: item.id,
+    channelId: ch.id,
+    campaignId,
+    phone: ct.phone_e164,
+    status: result.status,
+    requestId: result.requestId,
+    contentType: result.contentType,
+    body: (result.body || "").slice(0, 1000),
+  });
   await supabaseAdmin.from("message_queue").update({
     status: tooMany ? "failed" : "pending",
     attempts,
-    last_error: result.body.slice(0, 500),
+    last_error: errLine,
     scheduled_for: new Date(Date.now() + backoffMs).toISOString(),
+    processing_started_at: null,
   }).eq("id", item.id);
   if (tooMany && item.campaign_recipient_id) {
     await supabaseAdmin.from("campaign_recipients").update({
-      status: "failed", error: result.body.slice(0, 300),
+      status: "failed", error: errLine.slice(0, 300),
     }).eq("id", item.campaign_recipient_id);
   }
   await supabaseAdmin.from("channels").update({
     status: result.status === 401 ? "error" : ch.status,
-    last_error: result.body.slice(0, 500),
+    last_error: errLine,
   }).eq("id", ch.id);
   if (tooMany && campaignId) await maybeFinishCampaign(ctx, campaignId);
   return "failed";

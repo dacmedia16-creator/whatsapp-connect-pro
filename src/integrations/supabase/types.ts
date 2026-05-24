@@ -610,6 +610,7 @@ export type Database = {
           last_error: string | null
           planned_channel_id: string | null
           processed_at: string | null
+          processing_started_at: string | null
           rendered_text: string
           scheduled_for: string
           settings_snapshot: Json | null
@@ -629,6 +630,7 @@ export type Database = {
           last_error?: string | null
           planned_channel_id?: string | null
           processed_at?: string | null
+          processing_started_at?: string | null
           rendered_text: string
           scheduled_for?: string
           settings_snapshot?: Json | null
@@ -648,6 +650,7 @@ export type Database = {
           last_error?: string | null
           planned_channel_id?: string | null
           processed_at?: string | null
+          processing_started_at?: string | null
           rendered_text?: string
           scheduled_for?: string
           settings_snapshot?: Json | null

@@ -10,10 +10,32 @@ export const Route = createFileRoute("/api/public/hooks/process-queue")({
       POST: async () => {
         const nowIso = new Date().toISOString();
 
+        // Reaper: solta leases órfãos parados em "processing" há mais de 5 min.
+        const staleCutoff = new Date(Date.now() - 5 * 60_000).toISOString();
+        await supabaseAdmin
+          .from("message_queue")
+          .update({
+            status: "pending",
+            processing_started_at: null,
+            last_error: "Reset automático: lease expirado (worker não concluiu em 5 min)",
+          })
+          .eq("status", "processing")
+          .lt("processing_started_at", staleCutoff);
+        // Também reseta processing antigos SEM timestamp (legado, pré-reaper).
+        await supabaseAdmin
+          .from("message_queue")
+          .update({
+            status: "pending",
+            last_error: "Reset automático: lease órfão sem timestamp",
+          })
+          .eq("status", "processing")
+          .is("processing_started_at", null)
+          .lt("created_at", staleCutoff);
+
         // Claim atômico: marca pending -> processing num único UPDATE.
         const { data: claimed, error: claimErr } = await supabaseAdmin
           .from("message_queue")
-          .update({ status: "processing" })
+          .update({ status: "processing", processing_started_at: nowIso })
           .lte("scheduled_for", nowIso)
           .eq("status", "pending")
           .select("id")

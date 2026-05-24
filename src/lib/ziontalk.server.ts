@@ -11,7 +11,7 @@ export async function zionSendMessage(opts: {
   phone: string;
   msg: string;
   media?: { url: string; filename: string; mime: string } | null;
-}): Promise<{ ok: boolean; status: number; body: string }> {
+}): Promise<{ ok: boolean; status: number; body: string; requestId: string | null; contentType: string | null }> {
   const form = new FormData();
   form.append("msg", opts.msg);
   form.append("mobile_phone", opts.phone);
@@ -20,14 +20,14 @@ export async function zionSendMessage(opts: {
     try {
       const r = await fetch(opts.media.url);
       if (!r.ok) {
-        return { ok: false, status: r.status, body: `Falha ao baixar mídia (${r.status})` };
+        return { ok: false, status: r.status, body: `Falha ao baixar mídia (${r.status})`, requestId: null, contentType: null };
       }
       const buf = await r.arrayBuffer();
       const blob = new Blob([buf], { type: opts.media.mime || r.headers.get("content-type") || "application/octet-stream" });
       // ZionTalk espera o campo "attachments" (multipart) para arquivos.
       form.append("attachments", blob, opts.media.filename);
     } catch (e: any) {
-      return { ok: false, status: 0, body: `Erro de mídia: ${e?.message ?? "desconhecido"}` };
+      return { ok: false, status: 0, body: `Erro de mídia: ${e?.message ?? "desconhecido"}`, requestId: null, contentType: null };
     }
   }
 
@@ -37,7 +37,22 @@ export async function zionSendMessage(opts: {
     body: form,
   });
   const text = await res.text();
-  return { ok: res.ok, status: res.status, body: text };
+  const requestId = res.headers.get("x-request-id") || res.headers.get("x-correlation-id");
+  const contentType = res.headers.get("content-type");
+  // Tenta extrair mensagem amigável de JSON {error|message|detail}
+  let body = text;
+  if (contentType && contentType.includes("application/json")) {
+    try {
+      const j = JSON.parse(text);
+      const friendly = j?.error || j?.message || j?.detail || j?.msg;
+      if (typeof friendly === "string" && friendly.length) {
+        body = `${friendly} :: ${text}`;
+      }
+    } catch {
+      // mantém text original
+    }
+  }
+  return { ok: res.ok, status: res.status, body, requestId, contentType };
 }
 
 export async function logSend(args: {
