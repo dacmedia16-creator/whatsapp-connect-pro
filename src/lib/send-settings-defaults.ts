@@ -2,7 +2,7 @@
 // Importado por servidor (server fns, sender) e cliente (forms, paineis).
 // Mantém este arquivo livre de imports React / supabase para poder ser usado em qualquer contexto.
 
-export type RotationMode = "round_robin" | "least_used" | "manual_priority";
+export type RotationMode = "round_robin" | "least_used" | "manual_priority" | "simple_call";
 
 export type SendSettings = {
   selected_channel_ids: string[];

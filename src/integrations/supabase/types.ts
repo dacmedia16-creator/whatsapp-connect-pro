@@ -942,7 +942,11 @@ export type Database = {
       message_direction: "in" | "out"
       queue_status: "pending" | "processing" | "sent" | "failed"
       recipient_status: "queued" | "sent" | "delivered" | "failed" | "opted_out"
-      rotation_mode: "round_robin" | "least_used" | "manual_priority"
+      rotation_mode:
+        | "round_robin"
+        | "least_used"
+        | "manual_priority"
+        | "simple_call"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -1091,7 +1095,12 @@ export const Constants = {
       message_direction: ["in", "out"],
       queue_status: ["pending", "processing", "sent", "failed"],
       recipient_status: ["queued", "sent", "delivered", "failed", "opted_out"],
-      rotation_mode: ["round_robin", "least_used", "manual_priority"],
+      rotation_mode: [
+        "round_robin",
+        "least_used",
+        "manual_priority",
+        "simple_call",
+      ],
     },
   },
 } as const

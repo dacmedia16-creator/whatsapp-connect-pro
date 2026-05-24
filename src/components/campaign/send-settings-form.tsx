@@ -56,6 +56,9 @@ export type ChannelOption = {
 
 export function validateSendSettings(form: SendSettingsState): string | null {
   if (!form.selected_channel_ids.length) return "Selecione ao menos 1 canal.";
+  if (form.rotation_mode === "simple_call" && form.selected_channel_ids.length < 4) {
+    return "Chama Simples requer no mínimo 4 canais selecionados.";
+  }
   if (form.random_delay_min !== null && form.random_delay_max !== null
     && form.random_delay_min > form.random_delay_max) {
     return "Delay aleatório: mínimo não pode ser maior que máximo.";
@@ -90,6 +93,11 @@ function formatDuration(minutes: number): string {
 
 function estimateDuration(form: SendSettingsState, totalRecipients: number) {
   const n = Math.max(1, form.selected_channel_ids.length || 1);
+  if (form.rotation_mode === "simple_call") {
+    // 1 envio a cada 15s, independente do número de chips
+    const ratePerMin = 60 / 15;
+    return { minutes: totalRecipients / ratePerMin, ratePerMin, channels: n };
+  }
   const min = Number(form.random_delay_min);
   const max = Number(form.random_delay_max);
   const delayMed = Number.isFinite(min) && Number.isFinite(max) && max >= min && max > 0
@@ -121,6 +129,9 @@ export function SendSettingsForm({
 }: Props) {
   const set = <K extends keyof SendSettingsState>(k: K, v: SendSettingsState[K]) =>
     onChange({ ...form, [k]: v });
+
+  const isSimpleCall = form.rotation_mode === "simple_call";
+  const simpleCallTooFew = isSimpleCall && form.selected_channel_ids.length < 4;
 
   function toggleChannel(id: string, on: boolean) {
     const selected = on
@@ -310,7 +321,24 @@ export function SendSettingsForm({
                 <div className="text-xs text-muted-foreground">Use o canal de maior prioridade enquanto disponível.</div>
               </div>
             </label>
+            <label className="flex items-start gap-3 p-3 border rounded-md cursor-pointer">
+              <RadioGroupItem value="simple_call" />
+              <div>
+                <div className="text-sm font-medium">Chama Simples</div>
+                <div className="text-xs text-muted-foreground">
+                  1 envio por canal em sequência, <b>15 segundos</b> entre canais. Requer no mínimo 4 canais selecionados.
+                  Ignora delays, limites por minuto/hora e modo lote.
+                </div>
+              </div>
+            </label>
           </RadioGroup>
+
+          {simpleCallTooFew && (
+            <div className="flex items-start gap-2 p-3 border border-destructive/40 bg-destructive/10 rounded-md text-sm text-destructive">
+              <AlertTriangle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+              <span>Chama Simples requer no mínimo 4 canais selecionados. Atualmente: {form.selected_channel_ids.length}.</span>
+            </div>
+          )}
 
           {form.rotation_mode === "manual_priority" && (
             <div className="space-y-2">
@@ -346,9 +374,13 @@ export function SendSettingsForm({
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Velocidade e limites</CardTitle>
-          <CardDescription>Controle a cadência de envios para evitar bloqueios.</CardDescription>
+          <CardDescription>
+            {isSimpleCall
+              ? "Desativado no modo Chama Simples (fixo 15s entre canais)."
+              : "Controle a cadência de envios para evitar bloqueios."}
+          </CardDescription>
         </CardHeader>
-        <CardContent className="grid sm:grid-cols-2 gap-4">
+        <CardContent className={`grid sm:grid-cols-2 gap-4 ${isSimpleCall ? "opacity-50 pointer-events-none" : ""}`}>
           <div className="space-y-1">
             <Label>Delay entre envios (segundos)</Label>
             <Input type="number" min={0} value={form.delay_seconds}
@@ -391,11 +423,12 @@ export function SendSettingsForm({
             <Layers className="h-4 w-4" /> Lotes sincronizados
           </CardTitle>
           <CardDescription>
-            Quando ligado, todos os canais disparam ao mesmo tempo (1 mensagem cada), aguardam a pausa, e disparam o próximo lote.
-            Quando desligado, cada chip segue seu próprio relógio (throughput máximo).
+            {isSimpleCall
+              ? "Desativado no modo Chama Simples."
+              : "Quando ligado, todos os canais disparam ao mesmo tempo (1 mensagem cada), aguardam a pausa, e disparam o próximo lote. Quando desligado, cada chip segue seu próprio relógio (throughput máximo)."}
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className={`space-y-4 ${isSimpleCall ? "opacity-50 pointer-events-none" : ""}`}>
           <div className="flex items-center justify-between p-3 border rounded-md">
             <div>
               <Label className="text-sm">Sincronizar lotes paralelos</Label>
