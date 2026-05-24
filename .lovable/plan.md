@@ -1,21 +1,38 @@
-## Fazer "Chama Simples" enviar a cada 15s de verdade
+# Tornar o intervalo do "Chama Simples" configurável
 
-### Problema
-Cron roda a cada 60s. No modo simple_call, o pacing global de 15s impede o 2º item do batch e o reagenda — então só sai 1 envio por tick = **1 a cada 60s** em vez de **1 a cada 15s**.
+Hoje o modo **Chama Simples** usa um intervalo fixo de **15 segundos** entre canais (hardcoded no backend e no formulário). Você quer poder definir esse valor ao criar/editar a campanha.
 
-### Solução
-No handler do cron (`src/routes/api/public/hooks/process-queue.ts`), processar múltiplos itens do mesmo tick **em série com sleep**, respeitando o gap de 15s, com teto de tempo para não bater no reaper (5 min).
+## Mudança proposta
 
-### Mudança (1 arquivo)
+Reutilizar o campo `delay_seconds` que já existe em `campaign_send_settings` como o "gap entre canais" do modo Chama Simples — assim **não precisa criar coluna nova** no banco.
 
-**`src/routes/api/public/hooks/process-queue.ts`** — depois do claim e antes do loop:
+### 1. UI — `src/components/campaign/send-settings-form.tsx`
+- No card do "Chama Simples", trocar o texto fixo "15 segundos" por uma frase dinâmica usando `form.delay_seconds` (ex.: *"1 envio por canal em sequência, **{X} segundos** entre canais…"*).
+- Quando `rotation_mode === "simple_call"`, **habilitar** o input de "Delay entre envios (s)" (hoje fica desativado) com:
+  - label adaptada: *"Segundos entre canais"*
+  - `min={5}` (proteção contra spam acidental), default 15
+  - remover a mensagem *"Desativado no modo Chama Simples (fixo 15s entre canais)"*
+- Na função `estimateDuration`, trocar `60 / 15` por `60 / Math.max(5, form.delay_seconds)`.
 
-1. Detectar se algum item pertence a campanha em `simple_call`: consultar `campaign_send_settings` dos `campaign_id` envolvidos (1 query).
-2. No loop, antes de chamar `processQueueItem`, se o item for de campanha `simple_call`:
-   - Buscar último envio da campanha via `lastCampaignSendAt(campaignId)` (já existe).
-   - Se `Date.now() - last < 15_000`, `await new Promise(r => setTimeout(r, diff))`.
-3. Adicionar um teto de tempo total por tick (ex.: 50 segundos): se ultrapassar, parar de processar e deixar os restantes voltarem ao próximo tick (release: marcar `status='pending'`, `processing_started_at=null` para os não-processados).
+### 2. Backend — `src/lib/send/channel-selector.server.ts`
+No bloco `isSimpleCall`, não forçar mais `delay_seconds: 15`. Manter o valor vindo do settings, com piso de 5s:
+```ts
+delay_seconds: Math.max(5, Number(settings?.delay_seconds) || 15),
+```
+O resto da lógica (gap global via `lastCampaignSendAt`) já lê esse `delay_seconds` automaticamente.
 
-Resultado: cada tick de 60s processa até ~3 envios de campanhas simple_call (3 × 15s = 45s), e os demais itens (não-simple_call) continuam paralelos. Combinado com a continuidade entre ticks, a cadência efetiva fica próxima de 1 envio a cada 15s.
+### 3. Process queue — `src/routes/api/public/hooks/process-queue.ts`
+Hoje a constante é fixa: `SIMPLE_CALL_GAP_MS = 15_000`. Mudar para ler por campanha:
+- Ao carregar `simpleCallCampaigns`, também guardar o `delay_seconds` de cada uma (`Map<campaignId, number>`).
+- No loop, usar `gapMs = (settings.delay_seconds ?? 15) * 1000` em vez da constante.
+- O teto de tick (`TICK_BUDGET_MS = 50_000`) continua igual — se o gap configurado for muito alto (ex.: 60s), o próximo tick do cron pega o item.
 
-Sem alterações no banco, na UI ou em outras campanhas.
+### 4. Sem migração de banco
+A coluna `delay_seconds` já existe em `campaign_send_settings`. Campanhas existentes em modo Chama Simples continuam funcionando: se o valor salvo for `30` (default), passam a usar 30s; se quiser manter 15s, é só editar a campanha.
+
+## Resultado
+Ao criar/editar uma campanha em **Chama Simples**, aparece o campo "Segundos entre canais" editável (mín. 5s). O backend respeita esse valor tanto na seleção de canal quanto no pacing do worker.
+
+## Fora de escopo
+- Não mexer no mínimo de 4 canais (regra mantida).
+- Não mexer em `max_per_minute/hour` nem no `batch_mode` (continuam ignorados em Chama Simples).
