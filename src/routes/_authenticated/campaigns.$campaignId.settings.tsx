@@ -56,7 +56,7 @@ function CampaignSendSettingsPage() {
     queryKey: ["sp-all-channels"],
     queryFn: async () => {
       const { data } = await supabase.from("channels")
-        .select("id, label, phone_e164, status")
+        .select("id, label, phone_e164, status, business_hours")
         .order("label", { ascending: true });
       return data ?? [];
     },
