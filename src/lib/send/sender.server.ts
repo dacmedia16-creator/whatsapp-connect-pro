@@ -248,13 +248,19 @@ export async function processQueueItem(item: any, ctx: SenderContext): Promise<P
     }).eq("id", item.id);
     return "rescheduled";
   }
-  const bh = isWithinBusinessHours(ch.business_hours);
-  if (!bh.ok) {
-    await supabaseAdmin.from("message_queue").update({
-      status: "pending",
-      scheduled_for: (bh.nextWindow ?? new Date(Date.now() + 30 * 60 * 1000)).toISOString(),
-    }).eq("id", item.id);
-    return "rescheduled";
+  // Janela do chip (`channels.business_hours`) só é aplicada quando NÃO há
+  // configuração de campanha. Quando a campanha tem `campaign_send_settings`,
+  // a janela da campanha já foi checada acima e é a fonte da verdade — assim
+  // o usuário não precisa abrir cada chip para liberar os mesmos dias/horários.
+  if (!settings) {
+    const bh = isWithinBusinessHours(ch.business_hours);
+    if (!bh.ok) {
+      await supabaseAdmin.from("message_queue").update({
+        status: "pending",
+        scheduled_for: (bh.nextWindow ?? new Date(Date.now() + 30 * 60 * 1000)).toISOString(),
+      }).eq("id", item.id);
+      return "rescheduled";
+    }
   }
 
   // Carrega API key (com cache por canal)

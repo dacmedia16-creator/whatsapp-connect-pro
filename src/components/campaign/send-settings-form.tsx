@@ -8,7 +8,7 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Separator } from "@/components/ui/separator";
-import { ArrowUp, ArrowDown, Smartphone, Clock, Layers } from "lucide-react";
+import { ArrowUp, ArrowDown, Smartphone, Clock, Layers, AlertTriangle } from "lucide-react";
 import { formatPhone } from "@/lib/phone";
 import {
   SEND_SETTINGS_DEFAULTS as SHARED_DEFAULTS,
@@ -49,6 +49,9 @@ export type ChannelOption = {
   label: string;
   phone_e164: string;
   status: string;
+  // `business_hours` vem como Json do Supabase; tratamos defensivamente no
+  // componente para extrair `days/start/end`.
+  business_hours?: unknown;
 };
 
 export function validateSendSettings(form: SendSettingsState): string | null {
@@ -149,8 +152,63 @@ export function SendSettingsForm({
   const showEstimate = typeof totalRecipients === "number" && totalRecipients > 0;
   const est = showEstimate ? estimateDuration(form, totalRecipients!) : null;
 
+  // Detecta chips selecionados cujo horário comercial (configurado em
+  // "Canais") é mais restrito do que a janela da campanha. O sender ignora
+  // o horário do chip quando a campanha tem settings — o banner é
+  // informativo, apenas para o usuário entender o comportamento.
+  type BH = { tz?: string; start?: string; end?: string; days?: number[] };
+  const parseBH = (raw: unknown): BH | null => {
+    if (!raw || typeof raw !== "object") return null;
+    const r = raw as Record<string, unknown>;
+    return {
+      tz: typeof r.tz === "string" ? r.tz : undefined,
+      start: typeof r.start === "string" ? r.start : undefined,
+      end: typeof r.end === "string" ? r.end : undefined,
+      days: Array.isArray(r.days) ? (r.days as unknown[]).filter((x): x is number => typeof x === "number") : undefined,
+    };
+  };
+  const channelHoursConflicts = form.selected_channel_ids
+    .map((id) => channels.find((c) => c.id === id))
+    .filter((c): c is ChannelOption => !!c)
+    .map((c) => ({ c, bh: parseBH(c.business_hours) }))
+    .filter(({ bh }) => {
+      if (!bh) return false;
+      const days = bh.days ?? [];
+      const missingDay = form.allowed_weekdays.some((d) => !days.includes(d));
+      const startConflict = !!bh.start && bh.start > form.allowed_start_time;
+      const endConflict = !!bh.end && bh.end < form.allowed_end_time;
+      return missingDay || startConflict || endConflict;
+    });
+
   return (
     <div className="space-y-5">
+      {channelHoursConflicts.length > 0 && (
+        <Card className="border-amber-500/40 bg-amber-500/10">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2 text-amber-700 dark:text-amber-400">
+              <AlertTriangle className="h-4 w-4" />
+              Atenção: horário comercial do chip
+            </CardTitle>
+            <CardDescription className="text-amber-800/80 dark:text-amber-300/80">
+              {channelHoursConflicts.length === 1 ? "O canal abaixo tem" : "Os canais abaixo têm"} um horário comercial mais restrito do que a janela desta campanha. <b>A janela da campanha será usada nos disparos</b> — o horário do chip será ignorado aqui.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ul className="text-xs text-amber-900 dark:text-amber-200 space-y-1">
+              {channelHoursConflicts.map(({ c, bh }) => {
+                const days = bh?.days ?? [];
+                const labels = WEEKDAYS.filter((d) => days.includes(d.id)).map((d) => d.label).join(", ") || "—";
+                return (
+                  <li key={c.id}>
+                    <b>{c.label}</b>: {labels} · {bh?.start || "00:00"}–{bh?.end || "23:59"}
+                  </li>
+                );
+              })}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
+
       {showEstimate && est && (
         <Card className="border-primary/30 bg-primary/5">
           <CardHeader className="pb-2">
