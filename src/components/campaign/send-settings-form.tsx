@@ -56,6 +56,9 @@ export type ChannelOption = {
 
 export function validateSendSettings(form: SendSettingsState): string | null {
   if (!form.selected_channel_ids.length) return "Selecione ao menos 1 canal.";
+  if (form.rotation_mode === "simple_call" && form.selected_channel_ids.length < 4) {
+    return "Chama Simples requer no mínimo 4 canais selecionados.";
+  }
   if (form.random_delay_min !== null && form.random_delay_max !== null
     && form.random_delay_min > form.random_delay_max) {
     return "Delay aleatório: mínimo não pode ser maior que máximo.";
