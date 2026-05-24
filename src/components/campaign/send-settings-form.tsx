@@ -93,6 +93,11 @@ function formatDuration(minutes: number): string {
 
 function estimateDuration(form: SendSettingsState, totalRecipients: number) {
   const n = Math.max(1, form.selected_channel_ids.length || 1);
+  if (form.rotation_mode === "simple_call") {
+    // 1 envio a cada 15s, independente do número de chips
+    const ratePerMin = 60 / 15;
+    return { minutes: totalRecipients / ratePerMin, ratePerMin, channels: n };
+  }
   const min = Number(form.random_delay_min);
   const max = Number(form.random_delay_max);
   const delayMed = Number.isFinite(min) && Number.isFinite(max) && max >= min && max > 0
