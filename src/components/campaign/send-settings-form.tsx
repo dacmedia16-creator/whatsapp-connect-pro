@@ -377,28 +377,35 @@ export function SendSettingsForm({
           <CardTitle className="text-base">Velocidade e limites</CardTitle>
           <CardDescription>
             {isSimpleCall
-              ? "Desativado no modo Chama Simples (fixo 15s entre canais)."
+              ? "No modo Chama Simples, apenas o intervalo entre canais é usado (mínimo 5s). Demais campos são ignorados."
               : "Controle a cadência de envios para evitar bloqueios."}
           </CardDescription>
         </CardHeader>
-        <CardContent className={`grid sm:grid-cols-2 gap-4 ${isSimpleCall ? "opacity-50 pointer-events-none" : ""}`}>
+        <CardContent className="grid sm:grid-cols-2 gap-4">
           <div className="space-y-1">
-            <Label>Delay entre envios (segundos)</Label>
-            <Input type="number" min={0} value={form.delay_seconds}
-              onChange={(e) => set("delay_seconds", Number(e.target.value) || 0)} />
+            <Label>{isSimpleCall ? "Segundos entre canais" : "Delay entre envios (segundos)"}</Label>
+            <Input
+              type="number"
+              min={isSimpleCall ? 5 : 0}
+              value={form.delay_seconds}
+              onChange={(e) => set("delay_seconds", Number(e.target.value) || 0)}
+            />
+            {isSimpleCall && (
+              <p className="text-xs text-muted-foreground">Mínimo 5 segundos. Aplica-se a cada novo envio (em qualquer canal).</p>
+            )}
           </div>
           <div />
-          <div className="space-y-1">
+          <div className={`space-y-1 ${isSimpleCall ? "opacity-50 pointer-events-none" : ""}`}>
             <Label>Delay aleatório mínimo (s)</Label>
             <Input type="number" min={0} value={form.random_delay_min ?? ""}
               onChange={(e) => set("random_delay_min", e.target.value === "" ? null : Number(e.target.value))} />
           </div>
-          <div className="space-y-1">
+          <div className={`space-y-1 ${isSimpleCall ? "opacity-50 pointer-events-none" : ""}`}>
             <Label>Delay aleatório máximo (s)</Label>
             <Input type="number" min={0} value={form.random_delay_max ?? ""}
               onChange={(e) => set("random_delay_max", e.target.value === "" ? null : Number(e.target.value))} />
           </div>
-          <Separator className="sm:col-span-2" />
+          <Separator className={`sm:col-span-2 ${isSimpleCall ? "opacity-50" : ""}`} />
           <div className="space-y-1">
             <Label>Máximo por minuto</Label>
             <Input type="number" min={1} value={form.max_per_minute}
