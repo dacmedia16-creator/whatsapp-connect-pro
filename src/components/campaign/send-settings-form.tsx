@@ -406,17 +406,17 @@ export function SendSettingsForm({
               onChange={(e) => set("random_delay_max", e.target.value === "" ? null : Number(e.target.value))} />
           </div>
           <Separator className={`sm:col-span-2 ${isSimpleCall ? "opacity-50" : ""}`} />
-          <div className="space-y-1">
+          <div className={`space-y-1 ${isSimpleCall ? "opacity-50 pointer-events-none" : ""}`}>
             <Label>Máximo por minuto</Label>
             <Input type="number" min={1} value={form.max_per_minute}
               onChange={(e) => set("max_per_minute", Number(e.target.value) || 1)} />
           </div>
-          <div className="space-y-1">
+          <div className={`space-y-1 ${isSimpleCall ? "opacity-50 pointer-events-none" : ""}`}>
             <Label>Máximo por hora</Label>
             <Input type="number" min={1} value={form.max_per_hour}
               onChange={(e) => set("max_per_hour", Number(e.target.value) || 1)} />
           </div>
-          <div className="space-y-1 sm:col-span-2">
+          <div className={`space-y-1 sm:col-span-2 ${isSimpleCall ? "opacity-50 pointer-events-none" : ""}`}>
             <Label>Máximo por dia (por canal)</Label>
             <Input type="number" min={1} value={form.max_per_day_per_channel}
               onChange={(e) => set("max_per_day_per_channel", Number(e.target.value) || 1)} />
