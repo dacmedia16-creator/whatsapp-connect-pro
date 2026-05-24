@@ -480,6 +480,13 @@ function CampaignDetail() {
           </Tabs>
         </CardContent>
       </Card>
+      <SendSettingsDialog
+        campaignId={campaign.id}
+        campaignName={campaign.name}
+        totalRecipients={campaign.total_recipients ?? 0}
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+      />
     </div>
   );
 }
