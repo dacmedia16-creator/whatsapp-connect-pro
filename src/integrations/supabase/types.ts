@@ -159,6 +159,7 @@ export type Database = {
           auto_pause_outside_hours: boolean
           batch_mode: boolean
           batch_pause_seconds: number | null
+          bypass_window_until: string | null
           campaign_id: string
           channel_priority: string[]
           created_at: string
@@ -182,6 +183,7 @@ export type Database = {
           auto_pause_outside_hours?: boolean
           batch_mode?: boolean
           batch_pause_seconds?: number | null
+          bypass_window_until?: string | null
           campaign_id: string
           channel_priority?: string[]
           created_at?: string
@@ -205,6 +207,7 @@ export type Database = {
           auto_pause_outside_hours?: boolean
           batch_mode?: boolean
           batch_pause_seconds?: number | null
+          bypass_window_until?: string | null
           campaign_id?: string
           channel_priority?: string[]
           created_at?: string
