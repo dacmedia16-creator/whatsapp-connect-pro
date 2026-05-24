@@ -147,6 +147,19 @@ function CampaignDetail() {
     },
     refetchInterval: live ? false : 15000,
   });
+
+  const { data: sendSettings } = useQuery({
+    queryKey: ["campaign-send-settings", campaignId],
+    queryFn: async () => getSettingsFn({ data: { campaignId } }),
+    refetchInterval: 30000,
+  });
+
+  const windowCheck = sendSettings ? isWithinCampaignWindowPure(sendSettings) : { ok: true, nextWindow: null };
+  const withinWindow = windowCheck.ok;
+  const nextWindowDate = windowCheck.nextWindow;
+  const bypassUntil = sendSettings?.bypass_window_until ? new Date(sendSettings.bypass_window_until) : null;
+  const bypassActive = !!bypassUntil && bypassUntil.getTime() > Date.now();
+
   const eventRows = eventsData?.rows ?? [];
   const eventTotal = eventsData?.count ?? 0;
   const totalPages = Math.max(1, Math.ceil(eventTotal / PAGE_SIZE));
@@ -266,18 +279,26 @@ function CampaignDetail() {
                     <Button variant="outline" onClick={() => sendBatch.mutate()} disabled={sendBatch.isPending}>
                       <Send className="h-4 w-4 mr-1" /> Processar lote
                     </Button>
-                    <Button variant="outline" onClick={() => statusMut.mutate("paused")}>
+                    <Button variant="outline" onClick={() => statusMut.mutate({ status: "paused" })}>
                       <Pause className="h-4 w-4 mr-1" /> Pausar
                     </Button>
                   </>
                 )}
                 {campaign.status === "paused" && (
-                  <Button onClick={() => statusMut.mutate("running")}>
+                  <Button
+                    onClick={() => {
+                      if (withinWindow || bypassActive) {
+                        statusMut.mutate({ status: "running" });
+                      } else {
+                        setResumeDialogOpen(true);
+                      }
+                    }}
+                  >
                     <Play className="h-4 w-4 mr-1" /> Retomar
                   </Button>
                 )}
                 {(campaign.status === "running" || campaign.status === "paused" || campaign.status === "scheduled") && (
-                  <Button variant="outline" onClick={() => statusMut.mutate("done")}>
+                  <Button variant="outline" onClick={() => statusMut.mutate({ status: "done" })}>
                     <Square className="h-4 w-4 mr-1" /> Finalizar
                   </Button>
                 )}
