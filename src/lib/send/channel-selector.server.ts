@@ -205,6 +205,8 @@ export type EnqueuePickOutput = {
 
 export function pickChannelForEnqueue(input: EnqueuePickInput): EnqueuePickOutput | null {
   const s = normalizeSendSettings(input.settings);
+  // "Chama Simples" se comporta como round_robin no planejamento (15s/limites são checados no runtime).
+  const effectiveMode = s.rotation_mode === "simple_call" ? "round_robin" : s.rotation_mode;
   const selected = s.selected_channel_ids.length
     ? s.selected_channel_ids
     : input.channels.map((c) => c.id);
@@ -218,7 +220,7 @@ export function pickChannelForEnqueue(input: EnqueuePickInput): EnqueuePickOutpu
     return sentToday < cap;
   };
 
-  const mode = s.rotation_mode;
+  const mode = effectiveMode;
   let intendedId: string | null = null;
   let ordered: string[] = [];
 
