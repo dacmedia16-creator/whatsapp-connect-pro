@@ -327,7 +327,7 @@ export function SendSettingsForm({
               <div>
                 <div className="text-sm font-medium">Chama Simples</div>
                 <div className="text-xs text-muted-foreground">
-                  1 envio por canal em sequência, <b>15 segundos</b> entre canais. Requer no mínimo 4 canais selecionados.
+                  1 envio por canal em sequência, <b>{Math.max(5, Number(form.delay_seconds) || 15)} segundos</b> entre canais (configurável abaixo). Requer no mínimo 4 canais selecionados.
                   Ignora delays, limites por minuto/hora e modo lote.
                 </div>
               </div>
