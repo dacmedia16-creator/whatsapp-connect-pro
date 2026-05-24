@@ -233,6 +233,15 @@ function CampaignDetail() {
                   <Radio className={`h-3 w-3 ${live ? "animate-pulse" : ""}`} />
                   {live ? "Ao vivo" : "Offline"}
                 </Badge>
+                {bypassActive && bypassUntil && (
+                  <Badge
+                    variant="outline"
+                    className="gap-1 self-center border-warning text-warning"
+                    title="Envio acontecendo fora da janela configurada"
+                  >
+                    Janela ignorada até {format(bypassUntil, "HH:mm")}
+                  </Badge>
+                )}
                 <Button variant="outline" onClick={() => setSettingsOpen(true)}>
                   <Settings className="h-4 w-4 mr-1" /> Configurar envios
                 </Button>
