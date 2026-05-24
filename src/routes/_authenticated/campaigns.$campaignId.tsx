@@ -24,6 +24,7 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import { SendSettingsDialog } from "@/components/campaign/send-settings-dialog";
 
 export const Route = createFileRoute("/_authenticated/campaigns/$campaignId")({
   component: CampaignDetail,
@@ -41,6 +42,7 @@ function CampaignDetail() {
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [eventPage, setEventPage] = useState(0);
   const [eventFilter, setEventFilter] = useState<"all" | "queued" | "sent" | "delivered" | "failed" | "opted_out">("all");
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const PAGE_SIZE = 25;
 
   const { data: campaign, isLoading } = useQuery({
@@ -212,10 +214,8 @@ function CampaignDetail() {
                   <Radio className={`h-3 w-3 ${live ? "animate-pulse" : ""}`} />
                   {live ? "Ao vivo" : "Offline"}
                 </Badge>
-                <Button asChild variant="outline">
-                  <Link to="/campaigns/$campaignId/settings" params={{ campaignId: campaign.id }}>
-                    <Settings className="h-4 w-4 mr-1" /> Configurar envios
-                  </Link>
+                <Button variant="outline" onClick={() => setSettingsOpen(true)}>
+                  <Settings className="h-4 w-4 mr-1" /> Configurar envios
                 </Button>
                 {(campaign.status === "draft" || campaign.status === "scheduled") && (
                   <AlertDialog>
