@@ -67,10 +67,11 @@ export async function pickChannel(
   // ignora max_per_minute/max_per_hour/batch_mode/random_delay.
   const isSimpleCall = settings?.rotation_mode === "simple_call";
   if (isSimpleCall) {
+    const configuredGap = Math.max(5, Number(settings?.delay_seconds) || 15);
     settings = {
       ...settings,
       rotation_mode: "round_robin",
-      delay_seconds: 15,
+      delay_seconds: configuredGap,
       random_delay_min: null,
       random_delay_max: null,
       max_per_minute: null,
