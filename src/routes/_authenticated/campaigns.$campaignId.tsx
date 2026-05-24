@@ -154,6 +154,25 @@ function CampaignDetail() {
     refetchInterval: 30000,
   });
 
+  const { data: sendTiming } = useQuery({
+    queryKey: ["campaign-timing", campaignId],
+    queryFn: async () => {
+      const [{ data: first }, { data: last }] = await Promise.all([
+        supabase.from("campaign_recipients").select("sent_at")
+          .eq("campaign_id", campaignId).not("sent_at", "is", null)
+          .order("sent_at", { ascending: true }).limit(1).maybeSingle(),
+        supabase.from("campaign_recipients").select("sent_at")
+          .eq("campaign_id", campaignId).not("sent_at", "is", null)
+          .order("sent_at", { ascending: false }).limit(1).maybeSingle(),
+      ]);
+      return {
+        startedAt: first?.sent_at ? new Date(first.sent_at as string) : null,
+        lastSentAt: last?.sent_at ? new Date(last.sent_at as string) : null,
+      };
+    },
+    refetchInterval: live ? false : 15000,
+  });
+
   const windowCheck = sendSettings ? isWithinCampaignWindowPure(sendSettings) : { ok: true, nextWindow: null };
   const withinWindow = windowCheck.ok;
   const nextWindowDate = windowCheck.nextWindow;
@@ -348,7 +367,7 @@ function CampaignDetail() {
             <span className="font-medium">{progress}%</span>
           </div>
           <Progress value={progress} />
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3 text-sm">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mt-3 text-sm">
             <div>
               <p className="text-muted-foreground text-xs">Agendada para</p>
               <p>{campaign.scheduled_at ? format(new Date(campaign.scheduled_at), "dd/MM/yyyy HH:mm", { locale: ptBR }) : "Imediato"}</p>
@@ -365,6 +384,14 @@ function CampaignDetail() {
               <p className="text-muted-foreground text-xs">Tags do público</p>
               <p>{((campaign.audience_filter as any)?.tags ?? []).join(", ") || "todos"}</p>
             </div>
+            <EtaCell
+              status={campaign.status as string}
+              queued={stats?.queued ?? 0}
+              sendSettings={sendSettings}
+              ratePerMin={campaign.rate_per_min}
+              channelsCount={(campaign.channel_ids as string[]).length}
+              lastSentAt={sendTiming?.lastSentAt ?? null}
+            />
           </div>
         </CardContent>
       </Card>
