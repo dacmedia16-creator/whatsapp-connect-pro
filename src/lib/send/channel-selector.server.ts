@@ -63,6 +63,20 @@ export async function pickChannel(
   currentChannelId: string,
   campaignId: string,
 ): Promise<PickOutcome> {
+  // Modo "Chama Simples": ciclo fixo 1-por-canal, 15s entre canais,
+  // ignora max_per_minute/max_per_hour/batch_mode/random_delay.
+  if (settings?.rotation_mode === "simple_call") {
+    settings = {
+      ...settings,
+      rotation_mode: "round_robin",
+      delay_seconds: 15,
+      random_delay_min: null,
+      random_delay_max: null,
+      max_per_minute: null,
+      max_per_hour: null,
+      batch_mode: false,
+    };
+  }
   const selected: string[] = (settings?.selected_channel_ids ?? []).filter(Boolean);
   const allowed = selected.length ? selected : [currentChannelId];
   const mode = settings?.rotation_mode ?? "round_robin";
