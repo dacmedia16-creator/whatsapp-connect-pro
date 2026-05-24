@@ -29,11 +29,15 @@ export const getSendSettingsFn = createServerFn({ method: "GET" })
       await supabaseAdmin
         .from("campaign_send_settings")
         .upsert(seeded, { onConflict: "campaign_id" });
-      return { campaign_id: data.campaignId, ...SEND_SETTINGS_DEFAULTS };
+      return { campaign_id: data.campaignId, ...SEND_SETTINGS_DEFAULTS, bypass_window_until: null as string | null };
     }
     // Nunca devolve rotation_cursor para o cliente (estado interno do sender).
     const normalized = normalizeSendSettings(row);
-    return { campaign_id: data.campaignId, ...normalized };
+    return {
+      campaign_id: data.campaignId,
+      ...normalized,
+      bypass_window_until: (row.bypass_window_until ?? null) as string | null,
+    };
   });
 
 const settingsInput = z.object({
