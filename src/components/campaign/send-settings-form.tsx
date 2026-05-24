@@ -125,6 +125,9 @@ export function SendSettingsForm({
   const set = <K extends keyof SendSettingsState>(k: K, v: SendSettingsState[K]) =>
     onChange({ ...form, [k]: v });
 
+  const isSimpleCall = form.rotation_mode === "simple_call";
+  const simpleCallTooFew = isSimpleCall && form.selected_channel_ids.length < 4;
+
   function toggleChannel(id: string, on: boolean) {
     const selected = on
       ? Array.from(new Set([...form.selected_channel_ids, id]))
