@@ -258,7 +258,7 @@ export function pickChannelForEnqueue(input: EnqueuePickInput): EnqueuePickOutpu
     }
     return {
       channel_id: cid,
-      reason: `rotation:${mode}`,
+      reason: `rotation:${s.rotation_mode}`,
       intended_channel_id: intendedId,
       fallback: intendedId !== null && cid !== intendedId,
       next_cursor: nextCursor,
