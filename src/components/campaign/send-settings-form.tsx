@@ -94,8 +94,9 @@ function formatDuration(minutes: number): string {
 function estimateDuration(form: SendSettingsState, totalRecipients: number) {
   const n = Math.max(1, form.selected_channel_ids.length || 1);
   if (form.rotation_mode === "simple_call") {
-    // 1 envio a cada 15s, independente do número de chips
-    const ratePerMin = 60 / 15;
+    // 1 envio a cada delay_seconds, independente do número de chips
+    const gap = Math.max(5, Number(form.delay_seconds) || 15);
+    const ratePerMin = 60 / gap;
     return { minutes: totalRecipients / ratePerMin, ratePerMin, channels: n };
   }
   const min = Number(form.random_delay_min);
@@ -326,7 +327,7 @@ export function SendSettingsForm({
               <div>
                 <div className="text-sm font-medium">Chama Simples</div>
                 <div className="text-xs text-muted-foreground">
-                  1 envio por canal em sequência, <b>15 segundos</b> entre canais. Requer no mínimo 4 canais selecionados.
+                  1 envio por canal em sequência, <b>{Math.max(5, Number(form.delay_seconds) || 15)} segundos</b> entre canais (configurável abaixo). Requer no mínimo 4 canais selecionados.
                   Ignora delays, limites por minuto/hora e modo lote.
                 </div>
               </div>
@@ -376,39 +377,46 @@ export function SendSettingsForm({
           <CardTitle className="text-base">Velocidade e limites</CardTitle>
           <CardDescription>
             {isSimpleCall
-              ? "Desativado no modo Chama Simples (fixo 15s entre canais)."
+              ? "No modo Chama Simples, apenas o intervalo entre canais é usado (mínimo 5s). Demais campos são ignorados."
               : "Controle a cadência de envios para evitar bloqueios."}
           </CardDescription>
         </CardHeader>
-        <CardContent className={`grid sm:grid-cols-2 gap-4 ${isSimpleCall ? "opacity-50 pointer-events-none" : ""}`}>
+        <CardContent className="grid sm:grid-cols-2 gap-4">
           <div className="space-y-1">
-            <Label>Delay entre envios (segundos)</Label>
-            <Input type="number" min={0} value={form.delay_seconds}
-              onChange={(e) => set("delay_seconds", Number(e.target.value) || 0)} />
+            <Label>{isSimpleCall ? "Segundos entre canais" : "Delay entre envios (segundos)"}</Label>
+            <Input
+              type="number"
+              min={isSimpleCall ? 5 : 0}
+              value={form.delay_seconds}
+              onChange={(e) => set("delay_seconds", Number(e.target.value) || 0)}
+            />
+            {isSimpleCall && (
+              <p className="text-xs text-muted-foreground">Mínimo 5 segundos. Aplica-se a cada novo envio (em qualquer canal).</p>
+            )}
           </div>
           <div />
-          <div className="space-y-1">
+          <div className={`space-y-1 ${isSimpleCall ? "opacity-50 pointer-events-none" : ""}`}>
             <Label>Delay aleatório mínimo (s)</Label>
             <Input type="number" min={0} value={form.random_delay_min ?? ""}
               onChange={(e) => set("random_delay_min", e.target.value === "" ? null : Number(e.target.value))} />
           </div>
-          <div className="space-y-1">
+          <div className={`space-y-1 ${isSimpleCall ? "opacity-50 pointer-events-none" : ""}`}>
             <Label>Delay aleatório máximo (s)</Label>
             <Input type="number" min={0} value={form.random_delay_max ?? ""}
               onChange={(e) => set("random_delay_max", e.target.value === "" ? null : Number(e.target.value))} />
           </div>
-          <Separator className="sm:col-span-2" />
-          <div className="space-y-1">
+          <Separator className={`sm:col-span-2 ${isSimpleCall ? "opacity-50" : ""}`} />
+          <div className={`space-y-1 ${isSimpleCall ? "opacity-50 pointer-events-none" : ""}`}>
             <Label>Máximo por minuto</Label>
             <Input type="number" min={1} value={form.max_per_minute}
               onChange={(e) => set("max_per_minute", Number(e.target.value) || 1)} />
           </div>
-          <div className="space-y-1">
+          <div className={`space-y-1 ${isSimpleCall ? "opacity-50 pointer-events-none" : ""}`}>
             <Label>Máximo por hora</Label>
             <Input type="number" min={1} value={form.max_per_hour}
               onChange={(e) => set("max_per_hour", Number(e.target.value) || 1)} />
           </div>
-          <div className="space-y-1 sm:col-span-2">
+          <div className={`space-y-1 sm:col-span-2 ${isSimpleCall ? "opacity-50 pointer-events-none" : ""}`}>
             <Label>Máximo por dia (por canal)</Label>
             <Input type="number" min={1} value={form.max_per_day_per_channel}
               onChange={(e) => set("max_per_day_per_channel", Number(e.target.value) || 1)} />
