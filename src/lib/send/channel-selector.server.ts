@@ -1,5 +1,5 @@
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { recentSends, lastSendAt } from "./rate-limit.server";
+import { recentSends, lastSendAt, lastCampaignSendAt } from "./rate-limit.server";
 import { normalizeSendSettings, type SendSettings } from "@/lib/send-settings-defaults";
 
 // Contexto compartilhado entre iterações de um mesmo batch: caches e cursor de RR.
@@ -65,7 +65,8 @@ export async function pickChannel(
 ): Promise<PickOutcome> {
   // Modo "Chama Simples": ciclo fixo 1-por-canal, 15s entre canais,
   // ignora max_per_minute/max_per_hour/batch_mode/random_delay.
-  if (settings?.rotation_mode === "simple_call") {
+  const isSimpleCall = settings?.rotation_mode === "simple_call";
+  if (isSimpleCall) {
     settings = {
       ...settings,
       rotation_mode: "round_robin",
@@ -139,7 +140,11 @@ export async function pickChannel(
       Number(settings?.random_delay_min ?? 0) || 0,
     );
     if (minGapSec > 0) {
-      const last = await lastSendAt(cid);
+      // No modo "Chama Simples", o gap é GLOBAL por campanha (último envio
+      // em QUALQUER canal). Nos demais modos, gap por chip.
+      const last = isSimpleCall
+        ? await lastCampaignSendAt(campaignId)
+        : await lastSendAt(cid);
       if (last && Date.now() - last.getTime() < minGapSec * 1000) {
         anyPacingOnly = true;
         const waitMs = minGapSec * 1000 - (Date.now() - last.getTime());

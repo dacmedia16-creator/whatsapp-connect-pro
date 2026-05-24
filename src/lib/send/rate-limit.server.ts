@@ -119,3 +119,18 @@ export async function lastSendAt(channelId: string): Promise<Date | null> {
     .maybeSingle();
   return data?.created_at ? new Date(data.created_at) : null;
 }
+
+// Último envio bem-sucedido da campanha em QUALQUER canal.
+// Usado pelo modo "Chama Simples" para impor pacing global (delay entre
+// quaisquer dois disparos da campanha, não por canal).
+export async function lastCampaignSendAt(campaignId: string): Promise<Date | null> {
+  const { data } = await supabaseAdmin
+    .from("send_logs")
+    .select("created_at")
+    .eq("campaign_id", campaignId)
+    .gte("http_status", 200).lt("http_status", 300)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return data?.created_at ? new Date(data.created_at) : null;
+}
