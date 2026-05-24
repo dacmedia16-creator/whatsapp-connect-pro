@@ -1,51 +1,64 @@
-## "Configurar envios" abre em modal (sem sair da página)
+## Liberar leases órfãos + capturar erro real da API
 
-Trocar o botão atual (que navega para `/campaigns/$id/settings`) por um modal/dialog que abre o mesmo formulário de configuração em cima da página da campanha. Ao salvar ou fechar, continua na mesma tela.
+Dois ajustes independentes para destravar a campanha REMAX e dar visibilidade real do que a Ziontalk retorna nas falhas.
 
 ---
 
-### 1. Novo componente — `src/components/campaign/send-settings-dialog.tsx`
+### (A) Reaper de leases órfãos em `message_queue`
 
-Wrapper em volta do `<Dialog>` shadcn que:
-- Recebe `campaignId`, `campaignName`, `totalRecipients`, `open`, `onOpenChange`.
-- Internamente carrega:
-  - Lista de canais (`channels` com `id, label, phone_e164, status, business_hours`).
-  - Settings atuais via `useServerFn(getSendSettingsFn)` + `useQuery(["send-settings", campaignId])`.
-- Renderiza `<SendSettingsForm>` dentro de `<DialogContent class="max-w-4xl max-h-[90vh] overflow-y-auto">`.
-- Rodapé do dialog com botões **Cancelar** / **Restaurar padrão** / **Salvar** — mesmas ações da página atual.
-- Ao salvar com sucesso: `toast.success`, `queryClient.invalidateQueries(["send-settings", campaignId])`, fecha o dialog.
-- Bloqueio de fechar quando há `dirty` (igual ao baseline atual: pergunta de confirmação opcional via toast — ou simplesmente desabilita o overlay-close enquanto dirty).
+**Problema observado:** 134 mensagens da campanha `bb6e2472…` estão em `status='processing'`, `attempts=0`, criadas às 20:23 e nunca tocadas. Vieram de um worker que pegou (`status='processing'`) e morreu antes de processar — ninguém mais as pega.
 
-### 2. `src/routes/_authenticated/campaigns.$campaignId.tsx`
+**Mudança de schema (migration):**
+- Adicionar `processing_started_at timestamptz NULL` em `message_queue`.
+- Index parcial: `CREATE INDEX ON message_queue (processing_started_at) WHERE status='processing'`.
 
-- Adicionar estado local `const [settingsOpen, setSettingsOpen] = useState(false)`.
-- Substituir o `<Button asChild>` + `<Link to="/campaigns/$campaignId/settings">` por:
-  ```tsx
-  <Button variant="outline" onClick={() => setSettingsOpen(true)}>
-    <Settings className="h-4 w-4 mr-1" /> Configurar envios
-  </Button>
-  <SendSettingsDialog
-    campaignId={campaign.id}
-    campaignName={campaign.name}
-    totalRecipients={campaign.total_recipients ?? 0}
-    open={settingsOpen}
-    onOpenChange={setSettingsOpen}
-  />
+**Setar `processing_started_at` no claim:** nos 2 lugares que fazem o claim atômico:
+- `src/routes/api/public/hooks/process-queue.ts` (linha 16)
+- `src/lib/ziontalk.functions.ts` `processQueueFn` (linha 229)
+
+Trocar `.update({ status: "processing" })` por `.update({ status: "processing", processing_started_at: nowIso })`.
+
+**Reset de presos:** antes do claim em ambos os runners, rodar:
+```ts
+await supabaseAdmin
+  .from("message_queue")
+  .update({
+    status: "pending",
+    processing_started_at: null,
+    last_error: "Reset automático: lease expirado (worker não concluiu em 5 min)",
+  })
+  .eq("status", "processing")
+  .lt("processing_started_at", new Date(Date.now() - 5 * 60_000).toISOString());
+```
+
+E nos handlers de `sent`/`failed` em `sender.server.ts`, limpar `processing_started_at: null` junto com o update final (para não deixar lixo).
+
+**Limpeza imediata** (fora da migration, via insert tool): resetar os 134 órfãos atuais da campanha REMAX para `pending` para destravar agora.
+
+---
+
+### (B) Capturar corpo de erro real da API
+
+**Problema:** `last_error` salva `"Failed to send the message"` — é literalmente o que a Ziontalk devolve em texto puro. Sem HTTP status e sem o JSON cru se houver. Difícil debugar.
+
+**Mudanças em `src/lib/ziontalk.server.ts`:**
+- Em `zionSendMessage`, capturar também `request_id`/headers úteis (`x-request-id`, `content-type`) e devolver no retorno: `{ ok, status, body, requestId, contentType }`.
+- Tentar parsear `body` como JSON e, se houver `{ error: ..., message: ... }`, extrair pra mensagem amigável.
+
+**Mudanças em `src/lib/send/sender.server.ts` (no bloco de falha, ~linha 398):**
+- Prefixar `last_error` com `[HTTP <status>]` para sempre saber o código:
+  ```ts
+  last_error: `[HTTP ${result.status}] ${(result.body || "sem corpo").slice(0, 480)}`
   ```
-
-### 3. Página standalone `/campaigns/$id/settings`
-
-- **Manter** a rota existente para acesso direto via URL (deep link) e como fallback. Apenas remover o uso pelo botão.
-- Nada muda no arquivo `campaigns.$campaignId.settings.tsx`.
-
-### 4. Refatoração mínima
-
-Extrair a lógica de carregar settings + ações de salvar para um hook compartilhado `useSendSettingsForm(campaignId)` em `src/lib/use-send-settings-form.ts`, reutilizado pelo dialog e pela página standalone. Evita duplicação. Retorna `{ form, setForm, baseline, dirty, channels, isLoading, save, reset }`.
+- Mesma coisa para o `last_error` do canal e `error` do recipient.
+- `console.error("[send-fail]", { queueId: item.id, channelId: ch.id, phone: ct.phone_e164, status: result.status, body: result.body, requestId: result.requestId })` — fica visível em `server-function-logs`.
+- Garantir que o `send_logs.insert` já existente (linha 329) continue gravando `http_status` + `response_text` completos (já faz; só confirmar).
 
 ---
 
-### UX
-- Dialog grande (`max-w-4xl`) com scroll interno.
-- Aviso "Alterações não salvas" no rodapé do dialog quando `dirty`.
-- Esc / clique fora pede confirmação se `dirty` (`onOpenChange` intercepta).
-- Após salvar, fica aberto? Não — fecha automaticamente após sucesso (UX típica de modal de config).
+### Fora do escopo, mas observado
+
+No preview apareceu um erro 400 da query de `campaign_events`:
+> `Could not find a relationship between 'campaign_events' and 'contacts' in the schema cache (PGRST200)`
+
+A tabela não tem FK declarada para `contacts`/`channels`, mas a UI tenta fazer embed `contact:contacts(...)`. Posso corrigir em seguida (adicionar as FKs ou trocar o embed por join manual) — só me avise.
