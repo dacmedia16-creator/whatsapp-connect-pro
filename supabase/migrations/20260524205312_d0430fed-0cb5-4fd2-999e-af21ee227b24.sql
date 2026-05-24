@@ -1,0 +1,1 @@
+ALTER TYPE public.rotation_mode ADD VALUE IF NOT EXISTS 'simple_call';
