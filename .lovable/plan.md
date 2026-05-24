@@ -1,24 +1,30 @@
-## Reativar campanha finalizada com pendências
+## Corrigir "Chama Simples" — delay global por campanha
 
-Diagnóstico da REMAX - Parceria:
-- `campaigns.status = 'done'`
-- 134 `campaign_recipients.status='queued'` e 134 `message_queue.status='pending'` (não foram drenados porque a UI antiga finalizava direto via `supabase.update`, pulando a server fn que marcava itens como `failed`).
-- 40 já enviados, 1 falha. Restam 134 prontos para serem processados.
+### Bug
+Em `src/lib/send/channel-selector.server.ts` (linha 68-79), `simple_call` força `delay_seconds: 15`, mas o pacing é medido por `lastSendAt(channelId)` (linha 142) — ou seja, **15s por canal**. Com 4 canais ativos, cada um tem seu próprio relógio começando em 0, então os 4 disparam quase simultaneamente, depois esperam 15s, e disparam outros 4 em rajada.
 
-### Mudanças
+Evidência: send_logs mostra 4 envios em 11 segundos no último ciclo.
 
-#### 1. UI — `src/routes/_authenticated/campaigns.$campaignId.tsx`
-Quando `campaign.status === 'done'` **e** existirem recipients pendentes (`stats.queued > 0`), mostrar botão **"Reativar e continuar envio"**.
+Comportamento esperado: **15s entre QUALQUER envio da campanha**, alternando canais a cada disparo.
 
-Comportamento ao clicar:
-- Abre `AlertDialog` de confirmação explicando: "X destinatários ficaram sem envio. A campanha voltará para o status 'Em execução' e continuará pelos pendentes."
-- Se já estiver fora da janela, reaproveita o mesmo diálogo do "Retomar" (Esperar próxima janela / Enviar agora 30 min).
-- Chama `setCampaignStatusFn({ status: 'running' })` (a server fn já reagenda `pending` para `now()`).
+### Mudança (1 arquivo)
 
-#### 2. Server fn — `src/lib/send-panel.functions.ts`
-Permitir transição `done → running` (já permitida pelo enum, sem mudança de schema). Adicionar pequena salvaguarda: quando vier `status='running'` e a campanha estiver hoje `done`, sincronizar 1) `campaign_recipients` com status diferente de `sent/failed/opted_out` que tenham item correspondente em `message_queue`, garantindo que voltem para `queued` (defensivo — atualmente já estão `queued` mesmo com campanha `done`).
+**`src/lib/send/rate-limit.server.ts`** — adicionar helper:
+```ts
+export async function lastCampaignSendAt(campaignId: string): Promise<Date | null> {
+  // último envio bem-sucedido da campanha em QUALQUER canal
+  const { data } = await supabaseAdmin
+    .from("send_logs")
+    .select("created_at")
+    .eq("campaign_id", campaignId)
+    .gte("http_status", 200).lt("http_status", 300)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return data?.created_at ? new Date(data.created_at) : null;
+}
+```
 
-#### 3. Ação imediata para a REMAX - Parceria
-Após o deploy: o gestor clica em **Reativar e continuar envio** na própria UI. Não vou tocar manualmente no banco — a mesma feature serve para qualquer campanha futura na mesma situação.
+**`src/lib/send/channel-selector.server.ts`** — no bloco de pacing (linha 136-149), quando `mode === "simple_call"` (preservar o modo original num `isSimpleCall` antes do override da linha 68), usar `lastCampaignSendAt(campaignId)` no lugar de `lastSendAt(cid)`. Para os outros modos, mantém o comportamento atual (15s por chip faz sentido para round_robin/least_used).
 
-Sem mudanças adicionais (badge de "Janela ignorada" e diálogo de horário já existem do passo anterior e serão reutilizados).
+Sem mudanças no banco, no enqueue ou na UI. Sem mudança de configuração para o usuário — basta retomar a campanha.
