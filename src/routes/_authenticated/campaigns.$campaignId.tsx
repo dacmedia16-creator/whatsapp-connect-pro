@@ -17,6 +17,8 @@ import { toast } from "sonner";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { enqueueCampaignFn, processQueueFn } from "@/lib/ziontalk.functions";
+import { setCampaignStatusFn, getSendSettingsFn } from "@/lib/send-panel.functions";
+import { isWithinCampaignWindowPure } from "@/lib/send/window-utils";
 import { formatPhone } from "@/lib/phone";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -38,11 +40,14 @@ function CampaignDetail() {
   const qc = useQueryClient();
   const enqueue = useServerFn(enqueueCampaignFn);
   const processBatch = useServerFn(processQueueFn);
+  const setStatusFn = useServerFn(setCampaignStatusFn);
+  const getSettingsFn = useServerFn(getSendSettingsFn);
   const [live, setLive] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [eventPage, setEventPage] = useState(0);
   const [eventFilter, setEventFilter] = useState<"all" | "queued" | "sent" | "delivered" | "failed" | "opted_out">("all");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [resumeDialogOpen, setResumeDialogOpen] = useState(false);
   const PAGE_SIZE = 25;
 
   const { data: campaign, isLoading } = useQuery({
@@ -142,6 +147,19 @@ function CampaignDetail() {
     },
     refetchInterval: live ? false : 15000,
   });
+
+  const { data: sendSettings } = useQuery({
+    queryKey: ["campaign-send-settings", campaignId],
+    queryFn: async () => getSettingsFn({ data: { campaignId } }),
+    refetchInterval: 30000,
+  });
+
+  const windowCheck = sendSettings ? isWithinCampaignWindowPure(sendSettings) : { ok: true, nextWindow: null };
+  const withinWindow = windowCheck.ok;
+  const nextWindowDate = windowCheck.nextWindow;
+  const bypassUntil = sendSettings?.bypass_window_until ? new Date(sendSettings.bypass_window_until) : null;
+  const bypassActive = !!bypassUntil && bypassUntil.getTime() > Date.now();
+
   const eventRows = eventsData?.rows ?? [];
   const eventTotal = eventsData?.count ?? 0;
   const totalPages = Math.max(1, Math.ceil(eventTotal / PAGE_SIZE));
@@ -177,14 +195,15 @@ function CampaignDetail() {
   });
 
   const statusMut = useMutation({
-    mutationFn: async (next: "draft" | "scheduled" | "running" | "paused" | "done") => {
-      const { error } = await supabase.from("campaigns").update({ status: next }).eq("id", campaignId);
-      if (error) throw error;
+    mutationFn: async (input: { status: "draft" | "scheduled" | "running" | "paused" | "done"; force_now?: boolean }) => {
+      await setStatusFn({ data: { campaignId, ...input } });
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["campaign", campaignId] });
+      qc.invalidateQueries({ queryKey: ["campaign-send-settings", campaignId] });
       toast.success("Status atualizado");
     },
+    onError: (e: Error) => toast.error(e.message),
   });
 
   if (isLoading) return <div className="p-6 text-muted-foreground">Carregando…</div>;
@@ -214,6 +233,15 @@ function CampaignDetail() {
                   <Radio className={`h-3 w-3 ${live ? "animate-pulse" : ""}`} />
                   {live ? "Ao vivo" : "Offline"}
                 </Badge>
+                {bypassActive && bypassUntil && (
+                  <Badge
+                    variant="outline"
+                    className="gap-1 self-center border-warning text-warning"
+                    title="Envio acontecendo fora da janela configurada"
+                  >
+                    Janela ignorada até {format(bypassUntil, "HH:mm")}
+                  </Badge>
+                )}
                 <Button variant="outline" onClick={() => setSettingsOpen(true)}>
                   <Settings className="h-4 w-4 mr-1" /> Configurar envios
                 </Button>
@@ -260,18 +288,26 @@ function CampaignDetail() {
                     <Button variant="outline" onClick={() => sendBatch.mutate()} disabled={sendBatch.isPending}>
                       <Send className="h-4 w-4 mr-1" /> Processar lote
                     </Button>
-                    <Button variant="outline" onClick={() => statusMut.mutate("paused")}>
+                    <Button variant="outline" onClick={() => statusMut.mutate({ status: "paused" })}>
                       <Pause className="h-4 w-4 mr-1" /> Pausar
                     </Button>
                   </>
                 )}
                 {campaign.status === "paused" && (
-                  <Button onClick={() => statusMut.mutate("running")}>
+                  <Button
+                    onClick={() => {
+                      if (withinWindow || bypassActive) {
+                        statusMut.mutate({ status: "running" });
+                      } else {
+                        setResumeDialogOpen(true);
+                      }
+                    }}
+                  >
                     <Play className="h-4 w-4 mr-1" /> Retomar
                   </Button>
                 )}
                 {(campaign.status === "running" || campaign.status === "paused" || campaign.status === "scheduled") && (
-                  <Button variant="outline" onClick={() => statusMut.mutate("done")}>
+                  <Button variant="outline" onClick={() => statusMut.mutate({ status: "done" })}>
                     <Square className="h-4 w-4 mr-1" /> Finalizar
                   </Button>
                 )}
@@ -487,6 +523,56 @@ function CampaignDetail() {
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
       />
+      <AlertDialog open={resumeDialogOpen} onOpenChange={setResumeDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Retomar fora do horário permitido</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-sm">
+                <p>
+                  A janela de envio configurada é{" "}
+                  <strong>
+                    {sendSettings?.allowed_start_time?.slice(0, 5)} – {sendSettings?.allowed_end_time?.slice(0, 5)}
+                  </strong>{" "}
+                  ({sendSettings?.timezone}).
+                </p>
+                <p>
+                  Como agora está fora dessa janela, por padrão os envios serão programados para a próxima
+                  abertura:{" "}
+                  <strong>
+                    {nextWindowDate ? format(nextWindowDate, "dd/MM 'às' HH:mm", { locale: ptBR }) : "—"}
+                  </strong>
+                  .
+                </p>
+                <p className="text-muted-foreground">
+                  Você pode forçar o envio agora mesmo por 30 minutos — a janela voltará a valer depois disso.
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="gap-2 sm:gap-2">
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                statusMut.mutate({ status: "running" });
+                setResumeDialogOpen(false);
+              }}
+            >
+              Esperar próxima janela
+            </AlertDialogAction>
+            <AlertDialogAction
+              className="bg-warning text-warning-foreground hover:bg-warning/90"
+              onClick={() => {
+                statusMut.mutate({ status: "running", force_now: true });
+                toast.message("Janela ignorada por 30 minutos");
+                setResumeDialogOpen(false);
+              }}
+            >
+              Enviar agora (30 min)
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
