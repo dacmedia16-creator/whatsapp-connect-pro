@@ -523,6 +523,56 @@ function CampaignDetail() {
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
       />
+      <AlertDialog open={resumeDialogOpen} onOpenChange={setResumeDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Retomar fora do horário permitido</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-sm">
+                <p>
+                  A janela de envio configurada é{" "}
+                  <strong>
+                    {sendSettings?.allowed_start_time?.slice(0, 5)} – {sendSettings?.allowed_end_time?.slice(0, 5)}
+                  </strong>{" "}
+                  ({sendSettings?.timezone}).
+                </p>
+                <p>
+                  Como agora está fora dessa janela, por padrão os envios serão programados para a próxima
+                  abertura:{" "}
+                  <strong>
+                    {nextWindowDate ? format(nextWindowDate, "dd/MM 'às' HH:mm", { locale: ptBR }) : "—"}
+                  </strong>
+                  .
+                </p>
+                <p className="text-muted-foreground">
+                  Você pode forçar o envio agora mesmo por 30 minutos — a janela voltará a valer depois disso.
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="gap-2 sm:gap-2">
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                statusMut.mutate({ status: "running" });
+                setResumeDialogOpen(false);
+              }}
+            >
+              Esperar próxima janela
+            </AlertDialogAction>
+            <AlertDialogAction
+              className="bg-warning text-warning-foreground hover:bg-warning/90"
+              onClick={() => {
+                statusMut.mutate({ status: "running", force_now: true });
+                toast.message("Janela ignorada por 30 minutos");
+                setResumeDialogOpen(false);
+              }}
+            >
+              Enviar agora (30 min)
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
