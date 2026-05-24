@@ -1,56 +1,51 @@
-## Modo "Chama Simples"
+## "Configurar envios" abre em modal (sem sair da página)
 
-Novo modo de rotação que envia um por canal, em ordem fixa, com **15 segundos** entre canais. Ao chegar no último, recomeça do primeiro. Requer **mínimo 4 canais** selecionados. Quando ativo, todas as outras configurações de velocidade/limites/lote são ignoradas e ficam desabilitadas no formulário.
-
----
-
-### 1. Banco (migration)
-
-Adicionar o valor `simple_call` ao enum `rotation_mode`:
-```sql
-ALTER TYPE public.rotation_mode ADD VALUE IF NOT EXISTS 'simple_call';
-```
-
-### 2. Tipos compartilhados — `src/lib/send-settings-defaults.ts`
-
-- Adicionar `"simple_call"` ao tipo `RotationMode`.
-
-### 3. Sender — `src/lib/send/channel-selector.server.ts`
-
-- Em `pickChannel` (runtime) e `pickChannelForEnqueue` (planejamento): tratar `mode === "simple_call"` igual a `round_robin` para ordem cíclica (usa `rotation_cursor`).
-- Quando o modo for `simple_call`, **sobrescrever os settings em memória** antes dos checks:
-  - `delay_seconds = 15`
-  - `random_delay_min = null`, `random_delay_max = null`
-  - `max_per_minute`, `max_per_hour` = ignorados (não aplicar como bloqueio de pacing — apenas o gap de 15s vale)
-  - `batch_mode = false`
-- Mantém os checks de `status` (paused/error) e `max_per_day_per_channel` / `daily_limit` por segurança (chip caído continua sendo pulado).
-
-### 4. Formulário — `src/components/campaign/send-settings-form.tsx`
-
-- Adicionar 4ª opção no `RadioGroup` de estratégia: **"Chama Simples"** — descrição: *"1 envio por canal em sequência, 15 segundos entre canais. Requer mínimo 4 canais."*
-- Quando `form.rotation_mode === "simple_call"`:
-  - Card **"Velocidade e limites"**: aplicar `opacity-50 pointer-events-none` no `<CardContent>` e mostrar nota: *"Desativado no modo Chama Simples (fixo 15s entre canais)."*
-  - Card **"Lotes sincronizados"**: mesmo tratamento.
-  - Forçar `batch_mode = false` ao selecionar o modo.
-- Exibir badge/alerta vermelho no card de canais quando `simple_call` e `selected_channel_ids.length < 4`: *"Chama Simples requer no mínimo 4 canais selecionados."*
-
-### 5. Validação — `validateSendSettings`
-
-Adicionar regra:
-```ts
-if (form.rotation_mode === "simple_call" && form.selected_channel_ids.length < 4) {
-  return "Chama Simples requer no mínimo 4 canais selecionados.";
-}
-```
-Isso bloqueia o salvamento (botão "Salvar" já usa `validateSendSettings` antes do upsert).
-
-### 6. Estimativa — `estimateDuration`
-
-Quando `rotation_mode === "simple_call"`: usar `delayMed = 15`, `ratePerMin = (60/15) * n = 4n msg/min`, ignorando `max_per_minute`.
+Trocar o botão atual (que navega para `/campaigns/$id/settings`) por um modal/dialog que abre o mesmo formulário de configuração em cima da página da campanha. Ao salvar ou fechar, continua na mesma tela.
 
 ---
 
-### Notas
-- O cursor de round-robin (`campaign_send_settings.rotation_cursor`) já existe e será reutilizado — não precisa de nova coluna.
-- Não mexe na seleção de canais nem na janela de horário da campanha (continuam valendo).
-- Chips em pacing/bloqueados continuam sendo pulados (mantém ordem cíclica, não trava).
+### 1. Novo componente — `src/components/campaign/send-settings-dialog.tsx`
+
+Wrapper em volta do `<Dialog>` shadcn que:
+- Recebe `campaignId`, `campaignName`, `totalRecipients`, `open`, `onOpenChange`.
+- Internamente carrega:
+  - Lista de canais (`channels` com `id, label, phone_e164, status, business_hours`).
+  - Settings atuais via `useServerFn(getSendSettingsFn)` + `useQuery(["send-settings", campaignId])`.
+- Renderiza `<SendSettingsForm>` dentro de `<DialogContent class="max-w-4xl max-h-[90vh] overflow-y-auto">`.
+- Rodapé do dialog com botões **Cancelar** / **Restaurar padrão** / **Salvar** — mesmas ações da página atual.
+- Ao salvar com sucesso: `toast.success`, `queryClient.invalidateQueries(["send-settings", campaignId])`, fecha o dialog.
+- Bloqueio de fechar quando há `dirty` (igual ao baseline atual: pergunta de confirmação opcional via toast — ou simplesmente desabilita o overlay-close enquanto dirty).
+
+### 2. `src/routes/_authenticated/campaigns.$campaignId.tsx`
+
+- Adicionar estado local `const [settingsOpen, setSettingsOpen] = useState(false)`.
+- Substituir o `<Button asChild>` + `<Link to="/campaigns/$campaignId/settings">` por:
+  ```tsx
+  <Button variant="outline" onClick={() => setSettingsOpen(true)}>
+    <Settings className="h-4 w-4 mr-1" /> Configurar envios
+  </Button>
+  <SendSettingsDialog
+    campaignId={campaign.id}
+    campaignName={campaign.name}
+    totalRecipients={campaign.total_recipients ?? 0}
+    open={settingsOpen}
+    onOpenChange={setSettingsOpen}
+  />
+  ```
+
+### 3. Página standalone `/campaigns/$id/settings`
+
+- **Manter** a rota existente para acesso direto via URL (deep link) e como fallback. Apenas remover o uso pelo botão.
+- Nada muda no arquivo `campaigns.$campaignId.settings.tsx`.
+
+### 4. Refatoração mínima
+
+Extrair a lógica de carregar settings + ações de salvar para um hook compartilhado `useSendSettingsForm(campaignId)` em `src/lib/use-send-settings-form.ts`, reutilizado pelo dialog e pela página standalone. Evita duplicação. Retorna `{ form, setForm, baseline, dirty, channels, isLoading, save, reset }`.
+
+---
+
+### UX
+- Dialog grande (`max-w-4xl`) com scroll interno.
+- Aviso "Alterações não salvas" no rodapé do dialog quando `dirty`.
+- Esc / clique fora pede confirmação se `dirty` (`onOpenChange` intercepta).
+- Após salvar, fica aberto? Não — fecha automaticamente após sucesso (UX típica de modal de config).
