@@ -341,9 +341,23 @@ export function SendSettingsForm({
             </div>
           )}
 
-          {form.rotation_mode === "manual_priority" && (
+          {(form.rotation_mode === "manual_priority"
+            || form.rotation_mode === "round_robin"
+            || form.rotation_mode === "simple_call") && (
             <div className="space-y-2">
-              <Label>Ordem de prioridade</Label>
+              <Label>
+                {form.rotation_mode === "manual_priority" && "Ordem de prioridade"}
+                {form.rotation_mode === "round_robin" && "Ordem da rotação"}
+                {form.rotation_mode === "simple_call" && "Ordem dos canais"}
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                {form.rotation_mode === "manual_priority"
+                  && "O canal nº 1 é usado enquanto disponível; os demais entram como fallback."}
+                {form.rotation_mode === "round_robin"
+                  && "Os canais são usados em ciclo, do 1 para o último."}
+                {form.rotation_mode === "simple_call"
+                  && "1 envio por canal, em sequência, respeitando esta ordem."}
+              </p>
               {orderedPriority.length === 0 && (
                 <div className="text-sm text-muted-foreground">Selecione canais acima.</div>
               )}

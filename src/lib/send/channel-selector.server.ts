@@ -80,8 +80,16 @@ export async function pickChannel(
     };
   }
   const selected: string[] = (settings?.selected_channel_ids ?? []).filter(Boolean);
-  const allowed = selected.length ? selected : [currentChannelId];
+  const baseOrder = selected.length ? selected : [currentChannelId];
   const mode = settings?.rotation_mode ?? "round_robin";
+  // Em round_robin (e simple_call, já convertido acima), respeita a ordem
+  // definida pelo usuário em channel_priority quando disponível.
+  const priorityOrdered: string[] = Array.isArray(settings?.channel_priority)
+    ? (settings.channel_priority as string[]).filter((id) => baseOrder.includes(id))
+    : [];
+  const allowed = mode === "round_robin" && priorityOrdered.length
+    ? [...priorityOrdered, ...baseOrder.filter((id) => !priorityOrdered.includes(id))]
+    : baseOrder;
   const candidates: string[] = [];
   let intendedId: string | null = null;
 
@@ -216,8 +224,17 @@ export function pickChannelForEnqueue(input: EnqueuePickInput): EnqueuePickOutpu
   const selected = s.selected_channel_ids.length
     ? s.selected_channel_ids
     : input.channels.map((c) => c.id);
-  const allowed = input.channels.filter((c) => selected.includes(c.id));
+  let allowed = input.channels.filter((c) => selected.includes(c.id));
   if (!allowed.length) return null;
+  // Em round_robin, aplica a ordem definida em channel_priority quando houver.
+  if (effectiveMode === "round_robin" && s.channel_priority.length) {
+    const byId = new Map(allowed.map((c) => [c.id, c] as const));
+    const ordered = s.channel_priority
+      .map((id) => byId.get(id))
+      .filter((c): c is (typeof allowed)[number] => !!c);
+    const rest = allowed.filter((c) => !s.channel_priority.includes(c.id));
+    allowed = [...ordered, ...rest];
+  }
 
   const isAvailable = (c: typeof allowed[number]) => {
     if (c.status === "paused" || c.status === "error") return false;
