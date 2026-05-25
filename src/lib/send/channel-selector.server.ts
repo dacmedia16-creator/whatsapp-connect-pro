@@ -80,8 +80,16 @@ export async function pickChannel(
     };
   }
   const selected: string[] = (settings?.selected_channel_ids ?? []).filter(Boolean);
-  const allowed = selected.length ? selected : [currentChannelId];
+  const baseOrder = selected.length ? selected : [currentChannelId];
   const mode = settings?.rotation_mode ?? "round_robin";
+  // Em round_robin (e simple_call, já convertido acima), respeita a ordem
+  // definida pelo usuário em channel_priority quando disponível.
+  const priorityOrdered: string[] = Array.isArray(settings?.channel_priority)
+    ? (settings.channel_priority as string[]).filter((id) => baseOrder.includes(id))
+    : [];
+  const allowed = mode === "round_robin" && priorityOrdered.length
+    ? [...priorityOrdered, ...baseOrder.filter((id) => !priorityOrdered.includes(id))]
+    : baseOrder;
   const candidates: string[] = [];
   let intendedId: string | null = null;
 
