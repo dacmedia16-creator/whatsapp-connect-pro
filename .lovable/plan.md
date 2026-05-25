@@ -1,23 +1,19 @@
-## Zerar contadores de envio do dia
+## Causa
 
-Resetar o contador "enviados hoje" de **todos os canais** para 0, sem afetar histórico de envios, fila ou campanhas.
+O schema Zod do fluxo "Nova Campanha" (`campaigns.functions.ts:158`) ainda valida `rotation_mode` contra `["round_robin", "least_used", "manual_priority"]` — sem `simple_call`. Quando o usuário escolhe "Chama Simples" no wizard e clica em **Enviar agora**, a validação rejeita o valor antes mesmo de gravar a campanha.
 
-### O que será feito
-- Atualizar a tabela `channels`:
-  - `sent_today = 0`
-  - `sent_today_date = CURRENT_DATE`
-- Aplicado a **todos os canais** (sem filtro).
+O painel de envios (`send-panel.functions.ts`) já tinha sido corrigido, mas esqueci de propagar o mesmo enum para o create-campaign.
 
-### O que NÃO muda
-- Mensagens já enviadas (`send_logs`, `campaign_recipients`, `messages`) permanecem intactas.
-- Fila (`message_queue`) não é tocada.
-- Status dos canais (connected/paused/error) não muda.
-- Limites diários (`daily_limit`) não mudam.
+## Correção
 
-### Efeito prático
-Após o reset, cada canal volta a poder enviar até seu `daily_limit` completo hoje (ex.: se o limite é 500 e já tinha enviado 25, agora pode enviar mais 500).
+Alinhar o enum de `rotation_mode` em `src/lib/campaigns.functions.ts` à fonte única (`SEND_SETTINGS_DEFAULTS` / `send-panel.functions.ts`):
 
-### SQL
-```sql
-UPDATE channels SET sent_today = 0, sent_today_date = CURRENT_DATE;
+```ts
+rotation_mode: z.enum(["round_robin", "least_used", "manual_priority", "simple_call"]),
 ```
+
+Nenhuma migração de banco é necessária — a coluna já aceita o valor (o painel de envios grava com sucesso). É apenas o validador do wizard que está desatualizado.
+
+## Verificação
+
+- Criar nova campanha com "Chama Simples" selecionado → deve salvar e iniciar envio sem erro de validação.
