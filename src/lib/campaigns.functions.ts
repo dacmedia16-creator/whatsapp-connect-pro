@@ -155,7 +155,7 @@ const createInput = z.object({
   initiate: z.boolean(),
   sendSettings: z.object({
     selected_channel_ids: z.array(z.string().uuid()).max(50),
-    rotation_mode: z.enum(["round_robin", "least_used", "manual_priority"]),
+    rotation_mode: z.enum(["round_robin", "least_used", "manual_priority", "simple_call"]),
     channel_priority: z.array(z.string().uuid()).max(50),
     delay_seconds: z.number().int().min(0).max(3600),
     random_delay_min: z.number().int().min(0).max(3600).nullable(),
