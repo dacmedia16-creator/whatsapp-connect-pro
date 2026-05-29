@@ -53,7 +53,7 @@ function DashboardPage() {
           .eq("status", "sent")
           .gte("sent_at", sinceIso)
           .limit(10000),
-        supabase.from("channels").select("id, label, status, sent_today, daily_limit"),
+        supabase.from("channels").select("id, label, status, sent_today, sent_today_date, daily_limit"),
         supabase.from("campaigns").select("id, name, status").in("status", ["running", "scheduled"]),
         supabase.from("messages").select("conversation_id, created_at").eq("direction", "in").gte("created_at", sinceIso).limit(10000),
         // Totais reais por destinatário (fonte única — bate com Painel e Relatórios)
@@ -246,7 +246,9 @@ function DashboardPage() {
           {data?.channels.length ? (
             <ul className="divide-y divide-border">
               {data.channels.map((c) => {
-                const used = c.daily_limit > 0 ? Math.round((c.sent_today / c.daily_limit) * 100) : 0;
+                const todayISO = new Date().toISOString().slice(0, 10);
+                const sentToday = c.sent_today_date === todayISO ? c.sent_today : 0;
+                const used = c.daily_limit > 0 ? Math.round((sentToday / c.daily_limit) * 100) : 0;
                 return (
                   <li key={c.id} className="flex items-center justify-between py-4 first:pt-0 last:pb-0 gap-4">
                     <div className="flex items-center gap-3 min-w-0">
@@ -264,7 +266,7 @@ function DashboardPage() {
                       <div className="min-w-0">
                         <p className="font-medium text-sm truncate">{c.label}</p>
                         <p className="text-xs text-muted-foreground">
-                          {c.sent_today.toLocaleString("pt-BR")} de {c.daily_limit.toLocaleString("pt-BR")} envios hoje
+                          {sentToday.toLocaleString("pt-BR")} de {c.daily_limit.toLocaleString("pt-BR")} envios hoje
                         </p>
                       </div>
                     </div>
